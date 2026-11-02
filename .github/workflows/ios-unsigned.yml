@@ -1,0 +1,30 @@
+# Backup option: builds the same unsigned .ipa on GitHub's Mac machines.
+# GitHub -> Actions -> "iOS IPA for Sideloadly" -> Run workflow, then download the artifact.
+name: iOS IPA for Sideloadly
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter test test
+      - run: flutter build ios --release --no-codesign
+      - name: Package .ipa
+        run: |
+          mkdir Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -qry masrofy.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masrofy-ipa
+          path: masrofy.ipa
+          retention-days: 14

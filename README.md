@@ -45,3 +45,11 @@ lib/
   screens/                   الرئيسية، السجل، الأقساط، المساعد، حسابي، الإعداد، القفل
   widgets/                   تسجيل مصروف، يوم خروج، الحلقة، عناصر مشتركة
 ```
+
+## التنزيل على الآيفون من ويندوز (مجاناً)
+1. **بناء ملف IPA** على [codemagic.io](https://codemagic.io): سجل بحساب GitHub ← Add application ← اختار الريبو ← هيقرأ `codemagic.yaml` ← Start new build ← workflow **iOS IPA for Sideloadly** ← لما يخلص نزّل `masrofy.ipa`.
+   (بديل: GitHub ← Actions ← **iOS IPA for Sideloadly** ← Run workflow ← نزّل `masrofy-ipa` من Artifacts.)
+2. سطّب **iTunes** (من موقع أبل، مش من Microsoft Store) و **[Sideloadly](https://sideloadly.io)**.
+3. وصّل الآيفون بالكابل ← Trust. اسحب `masrofy.ipa` على Sideloadly ← اكتب الـ Apple ID ← Start.
+4. على الآيفون: Settings ← Privacy & Security ← **Developer Mode** شغّله، وبعدين Settings ← General ← VPN & Device Management ← Trust.
+5. بالحساب المجاني التطبيق بيشتغل **٧ أيام** — أعد خطوة ٣ بنفس الـ Apple ID (بياناتك مش بتتمسح).
