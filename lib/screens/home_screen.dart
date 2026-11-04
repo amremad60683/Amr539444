@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,10 +7,11 @@ import '../services/budget_engine.dart';
 import '../services/date_utils.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
-import '../widgets/budget_ring.dart';
 import '../widgets/common.dart';
 import '../widgets/outing_sheet.dart';
+import '../widgets/today_meter.dart';
 
+/// Answers one question first: how much can I still spend today?
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key, required this.onNavigate});
   final ValueChanged<int> onNavigate;
@@ -18,44 +20,90 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final s = app.s;
+    final tk = context.tk;
     final insights = Assistant(app).insights();
+    final now = DateTime.now();
+    final plan = app.monthPlan;
+    final lasts = app.balanceDays();
 
     return SafeArea(
+      bottom: false,
       child: RefreshIndicator(
+        color: tk.ink,
+        backgroundColor: tk.surface,
         onRefresh: app.refresh,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
           children: [
-            _Header(name: app.settings.name, date: s.date(DateTime.now())),
-            const SizedBox(height: 16),
-            const _BalanceCard(),
-            const SizedBox(height: 12),
-            const _TodayCard(),
-            SectionTitle(
-              s.t('insights'),
-              trailing: TextButton(onPressed: () => onNavigate(3), child: Text(s.t('assistant'))),
-            ),
-            for (final i in insights.take(3)) ...[
-              _InsightTile(i),
-              const SizedBox(height: 8),
-            ],
-            const SizedBox(height: 4),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            _Header(name: app.settings.name, date: s.date(now)),
+            const SizedBox(height: 24),
+            const _TodayBlock(),
+            const SizedBox(height: 24),
+            FigureStrip(figures: [
+              Figure(
+                label: s.t('balance'),
+                value: s.money(app.settings.balance),
+                boneWidth: 84,
+              ),
+              Figure(label: s.t('monthSpent'), value: s.money(plan.spent)),
+              Figure(
+                label: s.t('lasts'),
+                value: lasts == null ? '—' : s.t('daysN', {'d': lasts}),
+                color: lasts == null ? tk.ink3 : null,
+                boneWidth: 56,
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Wrap(
               children: [
-                const Expanded(child: _OutingCard()),
-                const SizedBox(width: 12),
-                Expanded(child: _NextInstallmentCard(onTap: () => onNavigate(2))),
+                _SmallAction(
+                  icon: CupertinoIcons.pencil,
+                  label: s.t('editBalance'),
+                  onTap: () async {
+                    final v = await askAmount(context, s,
+                        title: s.t('setBalance'),
+                        helper: s.t('setBalanceHelp'),
+                        initial: app.settings.balance,
+                        allowZero: true);
+                    if (v != null) await app.setBalance(v);
+                  },
+                ),
+                _SmallAction(
+                  icon: CupertinoIcons.plus,
+                  label: s.t('addMoney'),
+                  onTap: () async {
+                    final v = await askAmount(context, s, title: s.t('addMoney'));
+                    if (v != null) await app.addMoney(v, '');
+                  },
+                ),
               ],
             ),
-            SectionTitle(s.t('last7days')),
-            const _WeekChart(),
+            SectionHeader(s.t('week')),
+            Panel(child: WeekBars(days: app.lastDays(7), limit: app.settings.maxDaily, s: s)),
+            SectionHeader(s.t('upcoming')),
+            const _Upcoming(),
+            SectionHeader(s.t('insights'), action: s.t('assistant'), onAction: () => onNavigate(3)),
+            Group(children: [
+              for (final i in insights.take(3))
+                Line(
+                  icon: i.icon,
+                  iconColor: _levelColor(tk, i.level),
+                  title: i.text,
+                ),
+            ]),
           ],
         ),
       ),
     );
   }
 }
+
+Color _levelColor(Tokens tk, InsightLevel l) => switch (l) {
+      InsightLevel.danger => tk.danger,
+      InsightLevel.warning => tk.warn,
+      InsightLevel.good => tk.accent,
+      InsightLevel.info => tk.ink2,
+    };
 
 class _Header extends StatelessWidget {
   const _Header({required this.name, required this.date});
@@ -64,371 +112,205 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final s = context.read<AppState>().s;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(s.t('hello', {'name': name}),
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-          Text(date, style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              )),
-        ],
-      ),
-    );
-  }
-}
-
-class _BalanceCard extends StatelessWidget {
-  const _BalanceCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final s = app.s;
-    final days = app.balanceDays();
-    final text = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppColors.gradientStart, AppColors.gradientEnd],
-          begin: AlignmentDirectional.topStart,
-          end: AlignmentDirectional.bottomEnd,
-        ),
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(color: AppColors.seed.withValues(alpha: 0.3), blurRadius: 20, offset: const Offset(0, 8)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    final app = context.read<AppState>();
+    final tk = context.tk;
+    return Row(
+      children: [
+        BrandMark(size: 36, isAr: app.isAr),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.account_balance_rounded, color: Colors.white70, size: 20),
-              const SizedBox(width: 8),
-              Text(s.t('balance'), style: text.titleSmall?.copyWith(color: Colors.white70)),
-              const Spacer(),
-              IconButton(
-                tooltip: s.t('editBalance'),
-                style: IconButton.styleFrom(backgroundColor: Colors.white24),
-                color: Colors.white,
-                icon: const Icon(Icons.edit_rounded, size: 18),
-                onPressed: () async {
-                  final v = await askAmount(context, s,
-                      title: s.t('setBalance'), initial: app.settings.balance, allowZero: true);
-                  if (v != null) await app.setBalance(v);
-                },
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                tooltip: s.t('addMoney'),
-                style: IconButton.styleFrom(backgroundColor: Colors.white24),
-                color: Colors.white,
-                icon: const Icon(Icons.add_rounded, size: 18),
-                onPressed: () async {
-                  final v = await askAmount(context, s, title: s.t('addMoney'));
-                  if (v != null) await app.addMoney(v, '');
-                },
-              ),
+              Text(app.s.t('hello', {'name': name}), style: AppType.title.copyWith(color: tk.ink)),
+              Text(date, style: AppType.label.copyWith(color: tk.ink3)),
             ],
           ),
-          const SizedBox(height: 4),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: AlignmentDirectional.centerStart,
-            child: Text(
-              s.money(app.settings.balance),
-              style: text.displaySmall?.copyWith(color: Colors.white, fontWeight: FontWeight.w800),
-            ),
-          ),
-          if (days != null) ...[
-            const SizedBox(height: 6),
-            Text(s.t('balanceLasts', {'d': days}), style: text.bodyMedium?.copyWith(color: Colors.white)),
-          ],
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
-class _TodayCard extends StatelessWidget {
-  const _TodayCard();
+class _SmallAction extends StatelessWidget {
+  const _SmallAction({required this.icon, required this.label, required this.onTap});
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final tk = context.tk;
+    return TextButton.icon(
+      onPressed: onTap,
+      style: TextButton.styleFrom(foregroundColor: tk.ink2, padding: const EdgeInsets.symmetric(horizontal: 10)),
+      icon: Icon(icon, size: 16),
+      label: Text(label, style: AppType.label.copyWith(fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+/// The answer: what is left today, the meter, and why.
+class _TodayBlock extends StatelessWidget {
+  const _TodayBlock();
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final s = app.s;
+    final tk = context.tk;
     final t = app.today;
-    final color = AppColors.forStatus(t.status);
-    final text = Theme.of(context).textTheme;
+    final statusColor = tk.forStatus(t.status);
     final statusText = switch (t.status) {
       BudgetStatus.safe => s.t('statusSafe'),
       BudgetStatus.warning => s.t('statusWarning'),
       BudgetStatus.over => s.t('statusOver'),
     };
+    final leadColor = t.status == BudgetStatus.safe ? tk.ink : statusColor;
 
-    return AppCard(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        children: [
-          if (t.isOuting) ...[
-            Pill(s.t('outingToday'), color: Theme.of(context).colorScheme.tertiary, icon: Icons.celebration_rounded),
-            const SizedBox(height: 12),
-          ],
-          Row(
-            children: [
-              BudgetRing(
-                progress: t.progress,
-                targetFraction: t.allowance == 0 ? 0 : t.target / t.allowance,
-                color: color,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(s.t('todayLeft'), style: text.labelSmall),
-                    FittedBox(
-                      child: Text(
-                        s.num0(t.remaining),
-                        style: text.headlineSmall?.copyWith(fontWeight: FontWeight.w800, color: color),
-                      ),
-                    ),
-                    Text(s.currency, style: text.labelSmall),
-                  ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (t.isOuting) ...[
+          Note(
+            icon: CupertinoIcons.star,
+            text: s.t('outingToday', {'x': s.money(t.allowance)}),
+            color: tk.ink2,
+          ),
+          const SizedBox(height: 10),
+        ],
+        Text(s.t('leftToday'), style: AppType.body.copyWith(color: tk.ink2)),
+        const SizedBox(height: 2),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 50,
+                child: Reveal(
+                bone: const Bone(width: 150, height: 40, radius: 8),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text.rich(
+                    TextSpan(children: [
+                      TextSpan(text: s.num0(t.remaining), style: AppType.lead.copyWith(color: leadColor)),
+                      TextSpan(text: '  ${s.currency}', style: AppType.body.copyWith(color: tk.ink3)),
+                    ]),
+                  ),
                 ),
               ),
-              const SizedBox(width: 18),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Pill(statusText, color: color),
-                    const SizedBox(height: 12),
-                    _kv(context, s.t('spentToday'), s.money(t.spent)),
-                    _kv(context, s.t('todayAllowance'), s.money(t.allowance)),
-                    _kv(context, s.t('target'), s.money(t.target)),
-                  ],
-                ),
               ),
-            ],
-          ),
-          if (t.deducted > 0) ...[
-            const SizedBox(height: 12),
-            _note(context, Icons.trending_down_rounded, AppColors.warning,
-                s.t('deductedToday', {'x': s.money(t.deducted)})),
-          ],
-          if (t.debtOut > 0) ...[
-            const SizedBox(height: 8),
-            _note(context, Icons.warning_amber_rounded, AppColors.danger,
-                s.t('carryTomorrow', {'x': s.money(t.debtOut)})),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _kv(BuildContext context, String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(
-          children: [
-            Expanded(child: Text(k, style: Theme.of(context).textTheme.bodySmall)),
-            Text(v, style: const TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: tk.tintFor(t.status), borderRadius: BorderRadius.circular(99)),
+              child: Text(statusText, style: AppType.meta.copyWith(color: statusColor, fontWeight: FontWeight.w700)),
+            ),
           ],
         ),
-      );
-
-  Widget _note(BuildContext context, IconData icon, Color color, String text) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
-        child: Row(
-          children: [
-            Icon(icon, color: color, size: 18),
-            const SizedBox(width: 8),
-            Expanded(child: Text(text, style: TextStyle(color: color, fontWeight: FontWeight.w600))),
-          ],
-        ),
-      );
-}
-
-class _InsightTile extends StatelessWidget {
-  const _InsightTile(this.insight);
-  final Insight insight;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = insightColor(context, insight.level);
-    return AppCard(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 18,
-            backgroundColor: color.withValues(alpha: 0.12),
-            child: Icon(insight.icon, color: color, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(child: Text(insight.text)),
-        ],
-      ),
-    );
-  }
-}
-
-Color insightColor(BuildContext context, InsightLevel l) => switch (l) {
-      InsightLevel.good => AppColors.safe,
-      InsightLevel.warning => AppColors.warning,
-      InsightLevel.danger => AppColors.danger,
-      InsightLevel.info => Theme.of(context).colorScheme.primary,
-    };
-
-class _OutingCard extends StatelessWidget {
-  const _OutingCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final s = app.s;
-    final upcoming = app.upcomingOutings;
-    final next = upcoming.isEmpty ? null : upcoming.first;
-    final tertiary = Theme.of(context).colorScheme.tertiary;
-    return AppCard(
-      onTap: () => showOutingSheet(context, initialDate: next?.key),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.celebration_rounded, color: tertiary),
-          const SizedBox(height: 8),
-          Text(s.t('outingDay'), style: const TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          if (next == null)
-            Text(s.t('planOuting'), style: TextStyle(color: tertiary, fontWeight: FontWeight.w600))
-          else ...[
-            Text(sameDay(next.key, DateTime.now()) ? s.t('today') : s.shortDate(next.key),
-                style: Theme.of(context).textTheme.bodySmall),
-            Text(s.money(next.value), style: TextStyle(color: tertiary, fontWeight: FontWeight.w800)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _NextInstallmentCard extends StatelessWidget {
-  const _NextInstallmentCard({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final s = app.s;
-    final next = app.nextInstallment;
-    final primary = Theme.of(context).colorScheme.primary;
-    return AppCard(
-      onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.event_repeat_rounded, color: primary),
-          const SizedBox(height: 8),
-          Text(s.t('nextInstallment'), style: const TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          if (next == null)
-            Text(s.t('noInstallments'), style: Theme.of(context).textTheme.bodySmall)
-          else ...[
-            Text('${next.name} • ${s.shortDate(next.nextDue)}',
-                style: Theme.of(context).textTheme.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
-            Text(s.money(next.amount), style: TextStyle(color: primary, fontWeight: FontWeight.w800)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// Bar chart of the last 7 days with the daily max line.
-class _WeekChart extends StatelessWidget {
-  const _WeekChart();
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final s = app.s;
-    final days = app.lastDays(7);
-    final maxVal = [
-      app.settings.maxDaily,
-      ...days.map((d) => d.spent),
-      ...days.map((d) => d.allowance),
-    ].reduce((a, b) => a > b ? a : b);
-    const h = 120.0;
-    final limitY = app.settings.maxDaily / maxVal * h;
-    final scheme = Theme.of(context).colorScheme;
-
-    return AppCard(
-      child: Column(
-        children: [
-          SizedBox(
-            height: h + 20,
-            child: Stack(
-              children: [
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: limitY + 20,
-                  child: Container(height: 1.5, color: AppColors.danger.withValues(alpha: 0.5)),
-                ),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    for (final d in days)
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Tooltip(
-                              message: s.money(d.spent),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 500),
-                                height: (d.spent / maxVal * h).clamp(3, h),
-                                margin: const EdgeInsets.symmetric(horizontal: 6),
-                                decoration: BoxDecoration(
-                                  color: d.spent == 0 ? scheme.surfaceContainerHighest : AppColors.forStatus(d.status),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            SizedBox(
-                              height: 16,
-                              child: Text(
-                                s.weekday(d.day),
-                                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                      fontWeight: sameDay(d.day, DateTime.now()) ? FontWeight.w800 : null,
-                                    ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              ],
+        SizedBox(
+          height: 20,
+          child: Reveal(
+            bone: const Bone(width: 120, height: 12),
+            child: Text(
+              s.t('spentOf', {'spent': s.money(t.spent), 'allow': s.money(t.allowance)}),
+              style: AppType.label.copyWith(color: tk.ink3),
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(width: 14, height: 2, color: AppColors.danger),
-              const SizedBox(width: 6),
-              Text('${s.t('dailyMax')}: ${s.money(app.settings.maxDaily)}',
-                  style: Theme.of(context).textTheme.labelSmall),
-            ],
+        ),
+        const SizedBox(height: 16),
+        TodayMeter(day: t, s: s),
+        if (t.deducted > 0) ...[
+          const SizedBox(height: 10),
+          Note(
+            icon: CupertinoIcons.arrow_counterclockwise,
+            text: s.t('deductedToday', {'x': s.money(t.deducted)}),
+            color: tk.warn,
           ),
         ],
-      ),
+        if (t.debtOut > 0) ...[
+          const SizedBox(height: 8),
+          Note(
+            icon: CupertinoIcons.exclamationmark_triangle,
+            text: s.t('carryTomorrow', {'x': s.money(t.debtOut)}),
+            color: tk.danger,
+          ),
+        ],
+      ],
     );
+  }
+}
+
+/// Installment, payday and outing, soonest first.
+class _Upcoming extends StatelessWidget {
+  const _Upcoming();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    final s = app.s;
+    final tk = context.tk;
+    final today = dateOnly(DateTime.now());
+
+    String when(DateTime d) {
+      final n = dateOnly(d).difference(today).inDays;
+      if (n == 0) return s.t('todayWord');
+      if (n == 1) return s.t('tomorrowWord');
+      return '${s.shortDate(d)} · ${s.t('inDays', {'d': n})}';
+    }
+
+    final rows = <(DateTime, Widget)>[];
+    final inst = app.nextInstallment;
+    if (inst != null) {
+      rows.add((
+        inst.nextDue,
+        Line(
+          icon: CupertinoIcons.calendar,
+          title: inst.name,
+          subtitle: when(inst.nextDue),
+          trailing: Text('-${s.money(inst.amount)}', style: AppType.bodyStrong.copyWith(color: tk.ink)),
+        ),
+      ));
+    }
+    final pay = app.settings.nextSalary;
+    if (app.settings.hasSalary && pay != null) {
+      rows.add((
+        pay,
+        Line(
+          icon: CupertinoIcons.money_pound_circle,
+          title: s.t('payday'),
+          subtitle: when(pay),
+          trailing: Text('+${s.money(app.settings.salary)}', style: AppType.bodyStrong.copyWith(color: tk.accent)),
+        ),
+      ));
+    }
+    final outings = app.upcomingOutings;
+    if (outings.isNotEmpty) {
+      final o = outings.first;
+      rows.add((
+        o.key,
+        Line(
+          icon: CupertinoIcons.star,
+          title: s.t('outingDay'),
+          subtitle: when(o.key),
+          trailing: Text(s.money(o.value), style: AppType.bodyStrong.copyWith(color: tk.ink)),
+          onTap: () => showOutingSheet(context, initialDate: o.key),
+        ),
+      ));
+    }
+    rows.sort((a, b) => a.$1.compareTo(b.$1));
+
+    return Group(children: [
+      if (rows.isEmpty) Line(title: s.t('nothingUpcoming'), titleColor: tk.ink3),
+      ...rows.map((r) => r.$2),
+      if (outings.isEmpty)
+        Line(
+          icon: CupertinoIcons.plus,
+          title: s.t('planOuting'),
+          titleColor: tk.ink2,
+          onTap: () => showOutingSheet(context),
+        ),
+    ]);
   }
 }

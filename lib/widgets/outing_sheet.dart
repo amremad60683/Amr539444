@@ -1,20 +1,19 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/date_utils.dart';
 import '../state/app_state.dart';
+import '../theme.dart';
 import 'common.dart';
 
 /// Plan an outing day with its own (bigger) budget.
-Future<void> showOutingSheet(BuildContext context, {DateTime? initialDate}) {
-  return showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    showDragHandle: true,
-    builder: (_) => _OutingSheet(initialDate: initialDate ?? DateTime.now()),
-  );
-}
+Future<void> showOutingSheet(BuildContext context, {DateTime? initialDate}) => showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _OutingSheet(initialDate: initialDate ?? DateTime.now()),
+    );
 
 class _OutingSheet extends StatefulWidget {
   const _OutingSheet({required this.initialDate});
@@ -47,6 +46,7 @@ class _OutingSheetState extends State<_OutingSheet> {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final s = app.s;
+    final tk = context.tk;
     final exists = app.outings.containsKey(dayKey(_date));
     final now = DateTime.now();
 
@@ -58,32 +58,28 @@ class _OutingSheetState extends State<_OutingSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(children: [
-              const Icon(Icons.celebration_rounded),
-              const SizedBox(width: 8),
-              Text(s.t('planOuting'),
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-            ]),
-            const SizedBox(height: 8),
-            Text(s.t('outingHelp'), style: Theme.of(context).textTheme.bodySmall),
+            Text(s.t('planOuting'), style: AppType.title.copyWith(color: tk.ink)),
+            const SizedBox(height: 4),
+            Text(s.t('outingHelp'), style: AppType.label.copyWith(color: tk.ink3)),
             const SizedBox(height: 16),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.calendar_month_rounded),
-              title: Text(s.t('outingDate')),
-              subtitle: Text(s.date(_date)),
-              trailing: const Icon(Icons.edit_calendar_rounded),
-              onTap: () async {
-                final d = await showDatePicker(
-                  context: context,
-                  initialDate: _date,
-                  firstDate: DateTime(now.year, now.month, now.day),
-                  lastDate: DateTime(now.year + 1, now.month, now.day),
-                );
-                if (d != null) setState(() => _date = d);
-              },
-            ),
-            const SizedBox(height: 8),
+            Group(children: [
+              Line(
+                icon: CupertinoIcons.calendar,
+                title: s.t('outingDate'),
+                trailing: Text(s.date(_date), style: AppType.body.copyWith(color: tk.ink2)),
+                chevron: true,
+                onTap: () async {
+                  final d = await showDatePicker(
+                    context: context,
+                    initialDate: _date,
+                    firstDate: DateTime(now.year, now.month, now.day),
+                    lastDate: DateTime(now.year + 1, now.month, now.day),
+                  );
+                  if (d != null) setState(() => _date = d);
+                },
+              ),
+            ]),
+            const SizedBox(height: 12),
             AmountField(
               controller: _budget,
               label: s.t('outingBudget'),
@@ -99,17 +95,15 @@ class _OutingSheetState extends State<_OutingSheet> {
               },
               child: Text(s.t('save')),
             ),
-            if (exists) ...[
-              const SizedBox(height: 8),
-              TextButton.icon(
+            if (exists)
+              TextButton(
                 onPressed: () async {
                   await app.removeOuting(dayKey(_date));
                   if (context.mounted) Navigator.pop(context);
                 },
-                icon: const Icon(Icons.delete_outline_rounded),
-                label: Text(s.t('removeOuting')),
+                style: TextButton.styleFrom(foregroundColor: tk.danger),
+                child: Text(s.t('removeOuting')),
               ),
-            ],
           ],
         ),
       ),

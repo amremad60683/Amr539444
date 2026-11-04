@@ -1,13 +1,14 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 
 import '../models/txn.dart';
+import '../services/budget_engine.dart';
 import '../services/date_utils.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
-/// All recorded entries grouped by day, with weekly/monthly totals.
+/// Every entry grouped by day, with this week / this month at the top.
 class HistoryScreen extends StatelessWidget {
   const HistoryScreen({super.key});
 
@@ -15,81 +16,57 @@ class HistoryScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final s = app.s;
+    final tk = context.tk;
     final now = DateTime.now();
     final week = app.spentBetween(DateTime(now.year, now.month, now.day - 6), now);
     final month = app.spentBetween(DateTime(now.year, now.month, 1), now);
-    final avg = app.averageDaily(30) ?? 0;
+    final avg = app.averageDaily(30);
 
     // Group by day (txns are sorted newest first).
     final groups = <String, List<Txn>>{};
     for (final t in app.txns) {
       groups.putIfAbsent(dayKey(t.date), () => []).add(t);
     }
+    final keys = groups.keys.toList();
 
     return SafeArea(
+      bottom: false,
       child: CustomScrollView(
         slivers: [
-          SliverAppBar(title: Text(s.t('history')), floating: true),
           SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             sliver: SliverToBoxAdapter(
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(child: _Stat(label: s.t('thisWeek'), value: s.money(week))),
-                  const SizedBox(width: 8),
-                  Expanded(child: _Stat(label: s.t('thisMonth'), value: s.money(month))),
-                  const SizedBox(width: 8),
-                  Expanded(child: _Stat(label: s.t('dailyAvg'), value: s.money(avg))),
+                  PageTitle(s.t('history')),
+                  const SizedBox(height: 12),
+                  FigureStrip(figures: [
+                    Figure(label: s.t('thisWeek'), value: s.money(week)),
+                    Figure(label: s.t('thisMonth'), value: s.money(month)),
+                    Figure(
+                      label: s.t('dailyAvg'),
+                      value: avg == null ? '—' : s.money(avg.roundToDouble()),
+                      color: avg == null ? tk.ink3 : null,
+                    ),
+                  ]),
                 ],
               ),
             ),
           ),
-          if (groups.isEmpty)
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.receipt_long_rounded, size: 64, color: Theme.of(context).colorScheme.outlineVariant),
-                    const SizedBox(height: 8),
-                    Text(s.t('noTxns')),
-                  ],
-                ),
-              ),
+          if (keys.isEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.all(16),
+              sliver: SliverToBoxAdapter(child: EmptyBlock(text: '${s.t('noTxns')}. ${s.t('noTxnsHint')}')),
             )
           else
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
               sliver: SliverList.builder(
-                itemCount: groups.length,
-                itemBuilder: (context, i) {
-                  final key = groups.keys.elementAt(i);
-                  return _DayGroup(day: parseDayKey(key), txns: groups[key]!);
-                },
+                itemCount: keys.length,
+                itemBuilder: (context, i) => _DayGroup(day: parseDayKey(keys[i]), txns: groups[keys[i]]!),
               ),
             ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Stat extends StatelessWidget {
-  const _Stat({required this.label, required this.value});
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.labelSmall),
-          const SizedBox(height: 4),
-          FittedBox(child: Text(value, style: const TextStyle(fontWeight: FontWeight.w800))),
         ],
       ),
     );
@@ -105,6 +82,7 @@ class _DayGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final s = app.s;
+    final tk = context.tk;
     final b = app.budgetFor(day);
     final now = DateTime.now();
     final label = sameDay(day, now)
@@ -113,32 +91,32 @@ class _DayGroup extends StatelessWidget {
             ? s.t('yesterday')
             : s.date(day);
     final hasExpenses = txns.any((t) => t.type == TxnType.expense);
+    final dayColor = b.status == BudgetStatus.over ? tk.danger : tk.ink3;
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+          padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
           child: Row(
             children: [
-              Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700))),
+              Expanded(child: Text(label, style: AppType.bodyStrong.copyWith(color: tk.ink))),
               if (b.isOuting) ...[
-                Icon(Icons.celebration_rounded, size: 16, color: Theme.of(context).colorScheme.tertiary),
+                Icon(CupertinoIcons.star, size: 14, color: tk.ink3),
                 const SizedBox(width: 6),
               ],
               if (hasExpenses)
-                Pill('${s.num0(b.spent)} / ${s.num0(b.allowance)}', color: AppColors.forStatus(b.status)),
+                Text(
+                  '${s.num0(b.spent)} / ${s.num0(b.allowance)}',
+                  style: AppType.label.copyWith(
+                    color: dayColor,
+                    fontWeight: b.status == BudgetStatus.over ? FontWeight.w700 : FontWeight.w400,
+                  ),
+                ),
             ],
           ),
         ),
-        AppCard(
-          padding: EdgeInsets.zero,
-          child: Column(
-            children: [
-              for (final t in txns) _TxnTile(t),
-            ],
-          ),
-        ),
+        Group(children: [for (final t in txns) _TxnTile(t)]),
       ],
     );
   }
@@ -152,42 +130,45 @@ class _TxnTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.read<AppState>();
     final s = app.s;
-    final scheme = Theme.of(context).colorScheme;
-    final (icon, color, title) = switch (t.type) {
-      TxnType.expense => (t.category.icon, scheme.primary, t.note.isEmpty ? categoryLabel(s, t.category) : t.note),
-      TxnType.installment => (Icons.event_repeat_rounded, AppColors.warning, app.installmentName(t)),
-      TxnType.deposit => (Icons.savings_rounded, AppColors.safe, t.note.isEmpty ? s.t('type_deposit') : t.note),
+    final tk = context.tk;
+    final cat = app.categoryById(t.category);
+    final (IconData icon, String title, String subtitle) = switch (t.type) {
+      TxnType.expense => (
+          cat.icon,
+          t.note.isEmpty ? cat.label(app.isAr) : t.note,
+          t.note.isEmpty ? s.time(t.date) : '${cat.label(app.isAr)} · ${s.time(t.date)}',
+        ),
+      TxnType.installment => (CupertinoIcons.calendar, app.installmentName(t), s.t('type_installment')),
+      TxnType.deposit => (CupertinoIcons.plus_circle, t.note.isEmpty ? s.t('type_deposit') : t.note, s.t('type_deposit')),
+      TxnType.salary => (CupertinoIcons.money_pound_circle, s.t('type_salary'), s.time(t.date)),
     };
-    final subtitle = t.type == TxnType.expense
-        ? '${categoryLabel(s, t.category)} • ${s.time(t.date)}'
-        : s.t('type_${t.type.name}');
-    final sign = t.type == TxnType.deposit ? '+' : '-';
+    final income = t.isIncome;
 
     return Dismissible(
       key: ValueKey(t.id),
       direction: DismissDirection.endToStart,
       background: Container(
-        color: scheme.error,
+        color: tk.danger,
         alignment: AlignmentDirectional.centerEnd,
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Icon(Icons.delete_rounded, color: scheme.onError),
+        child: Icon(CupertinoIcons.trash, color: tk.bg),
       ),
       confirmDismiss: (_) => confirm(context, s, s.t('deleteTxn'), ok: s.t('delete'), danger: true),
       onDismissed: (_) => app.deleteTxn(t),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: color.withValues(alpha: 0.12),
-          child: Icon(icon, color: color, size: 20),
-        ),
-        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(subtitle),
+      child: Line(
+        icon: icon,
+        iconColor: income ? tk.accent : tk.ink2,
+        title: title,
+        subtitle: subtitle,
         trailing: Text(
-          '$sign${s.money(t.amount)}',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            color: t.type == TxnType.deposit ? AppColors.safe : null,
-          ),
+          '${income ? '+' : '-'}${s.money(t.amount)}',
+          style: AppType.bodyStrong.copyWith(color: income ? tk.accent : tk.ink),
         ),
+        onLongPress: () async {
+          if (await confirm(context, s, s.t('deleteTxn'), ok: s.t('delete'), danger: true)) {
+            await app.deleteTxn(t);
+          }
+        },
       ),
     );
   }

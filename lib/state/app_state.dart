@@ -5,11 +5,13 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import '../l10n/strings.dart';
+import '../models/category.dart';
 import '../models/installment.dart';
 import '../models/settings.dart';
 import '../models/txn.dart';
 import '../services/budget_engine.dart';
 import '../services/date_utils.dart';
+import '../services/month_plan.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 
@@ -31,19 +33,22 @@ class AppState extends ChangeNotifier {
   final StorageService _storage;
   final NotificationService _notifications;
 
-  late AppSettings settings;
+  StorageService get storage => _storage;
+  NotificationService get notifications => _notifications;
+
+  AppSettings settings = AppSettings();
+
+  /// True once data is loaded from storage.
+  bool ready = false;
   List<Txn> txns = [];
   List<Installment> installments = [];
 
   /// dayKey -> outing budget.
   Map<String, double> outings = {};
 
-  /// Installments auto-paid during the last [processDueInstallments] call.
-  List<Installment> lastAutoPaid = [];
-
   bool unlocked = false;
 
-  S get s => S(settings.lang);
+  S get s => S(settings.lang, settings.gender);
   bool get isAr => settings.lang == 'ar';
 
   // ---------------------------------------------------------------- loading
@@ -55,17 +60,27 @@ class AppState extends ChangeNotifier {
     outings = _storage.loadOutings();
     unlocked = settings.pinHash == null;
     if (settings.onboarded) {
-      await processDueInstallments();
+      await processAutomatic();
       await _reschedule();
     }
+    ready = true;
+    notifyListeners();
   }
 
-  /// Called when the app is resumed: pay due installments, refresh reminders.
+  /// Called when the app is resumed: pay due installments, add salary,
+  /// refresh reminders.
   Future<void> refresh() async {
     if (!settings.onboarded) return;
-    final paid = await processDueInstallments();
-    if (paid) await _reschedule();
+    if (await processAutomatic()) await _reschedule();
     notifyListeners();
+  }
+
+  /// Runs everything that happens by itself on a date. Returns true if
+  /// anything changed.
+  Future<bool> processAutomatic() async {
+    final a = await processDueInstallments();
+    final b = await processSalary();
+    return a || b;
   }
 
   // ---------------------------------------------------------------- budget
@@ -99,12 +114,27 @@ class AppState extends ChangeNotifier {
 
   List<DayBudget> lastDays(int n) => engine.range(DateTime.now(), n);
 
-  double spentBetween(DateTime from, DateTime to) => txns
-      .where((t) =>
-          t.type == TxnType.expense &&
-          !t.date.isBefore(dateOnly(from)) &&
-          t.date.isBefore(DateTime(to.year, to.month, to.day + 1)))
-      .fold(0.0, (a, t) => a + t.amount);
+  Iterable<Txn> _between(TxnType type, DateTime from, DateTime to) => txns.where((t) =>
+      t.type == type &&
+      !t.date.isBefore(dateOnly(from)) &&
+      t.date.isBefore(DateTime(to.year, to.month, to.day + 1)));
+
+  double spentBetween(DateTime from, DateTime to) =>
+      _between(TxnType.expense, from, to).fold(0.0, (a, t) => a + t.amount);
+
+  double installmentsPaidBetween(DateTime from, DateTime to) =>
+      _between(TxnType.installment, from, to).fold(0.0, (a, t) => a + t.amount);
+
+  /// Category id -> amount spent between [from] and [to], largest first.
+  List<MapEntry<CategoryDef, double>> spentByCategory(DateTime from, DateTime to) {
+    final m = <String, double>{};
+    for (final t in _between(TxnType.expense, from, to)) {
+      final id = categoryById(t.category).id;
+      m[id] = (m[id] ?? 0) + t.amount;
+    }
+    return (m.entries.map((e) => MapEntry(categoryById(e.key), e.value)).toList()
+      ..sort((a, b) => b.value.compareTo(a.value)));
+  }
 
   /// Average daily spending over the last [days] tracked days.
   double? averageDaily([int days = 14]) {
@@ -113,7 +143,6 @@ class AppState extends ChangeNotifier {
     final from = DateTime(now.year, now.month, now.day - (days - 1));
     final effectiveFrom = from.isBefore(start) ? start : from;
     final count = DateTime(now.year, now.month, now.day).difference(effectiveFrom).inDays + 1;
-    if (count < 2 && spentByDay.isEmpty) return null;
     final total = spentBetween(effectiveFrom, now);
     if (total == 0) return null;
     return total / max(1, count);
@@ -138,8 +167,7 @@ class AppState extends ChangeNotifier {
 
   /// Estimated number of days the balance lasts after upcoming installments.
   int? balanceDays() {
-    final avg = averageDaily();
-    final perDay = avg ?? 0;
+    final perDay = averageDaily() ?? 0;
     if (perDay <= 0) return null;
     final free = settings.balance - installmentsDueWithin(30);
     return max(0, (free / perDay).floor());
@@ -157,6 +185,45 @@ class AppState extends ChangeNotifier {
   double get remainingInstallments =>
       installments.fold(0.0, (a, i) => a + i.remainingAmount);
 
+  MonthPlan get monthPlan => MonthPlan.build(
+        now: DateTime.now(),
+        balance: settings.balance,
+        salary: settings.salary,
+        salaryDay: settings.salaryDay,
+        nextSalary: settings.nextSalary,
+        safetyBalance: settings.safetyBalance,
+        spentByDay: spentByDay,
+        installmentsPaidBetween: installmentsPaidBetween,
+        installments: installments,
+        trackingStart: settings.startDate,
+      );
+
+  // ---------------------------------------------------------------- categories
+
+  List<CategoryDef> get allCategories => [...builtInCategories, ...settings.customCategories];
+
+  CategoryDef categoryById(String id) =>
+      allCategories.where((c) => c.id == id).firstOrNull ?? builtInCategories.last;
+
+  Future<void> addCategory(String name, String iconKey) async {
+    settings.customCategories.add(
+      CategoryDef(id: 'c_${_id()}', ar: name, en: name, iconKey: iconKey, custom: true),
+    );
+    await _saveSettings();
+  }
+
+  Future<void> deleteCategory(CategoryDef c) async {
+    settings.customCategories.removeWhere((e) => e.id == c.id);
+    txns = [
+      for (final t in txns)
+        t.category == c.id
+            ? Txn(id: t.id, amount: t.amount, date: t.date, note: t.note, category: 'other', type: t.type)
+            : t,
+    ];
+    await _storage.saveTxns(txns);
+    await _saveSettings();
+  }
+
   // ---------------------------------------------------------------- onboarding & settings
 
   Future<void> completeOnboarding({
@@ -165,6 +232,9 @@ class AppState extends ChangeNotifier {
     required double minDaily,
     required double maxDaily,
     required String lang,
+    String gender = 'm',
+    double salary = 0,
+    int salaryDay = 1,
   }) async {
     settings
       ..name = name
@@ -172,8 +242,10 @@ class AppState extends ChangeNotifier {
       ..minDaily = minDaily
       ..maxDaily = maxDaily
       ..lang = lang
+      ..gender = gender
       ..startDate = dateOnly(DateTime.now())
       ..onboarded = true;
+    _applySalary(salary, salaryDay);
     unlocked = true;
     await _storage.saveSettings(settings);
     await _notifications.requestPermission();
@@ -183,6 +255,16 @@ class AppState extends ChangeNotifier {
 
   Future<void> setLanguage(String lang) async {
     settings.lang = lang;
+    await _saveSettings();
+  }
+
+  Future<void> setGender(String g) async {
+    settings.gender = g;
+    await _saveSettings();
+  }
+
+  Future<void> setThemeMode(String m) async {
+    settings.themeMode = m;
     await _saveSettings();
   }
 
@@ -203,18 +285,14 @@ class AppState extends ChangeNotifier {
     await _saveSettings();
   }
 
+  Future<void> setSafetyBalance(double v) async {
+    settings.safetyBalance = v;
+    await _saveSettings();
+  }
+
   Future<void> addMoney(double amount, String note) async {
     settings.balance += amount;
-    txns.insert(
-      0,
-      Txn(
-        id: _id(),
-        amount: amount,
-        date: DateTime.now(),
-        note: note,
-        type: TxnType.deposit,
-      ),
-    );
+    txns.insert(0, Txn(id: _id(), amount: amount, date: DateTime.now(), note: note, type: TxnType.deposit));
     await _storage.saveTxns(txns);
     await _saveSettings();
   }
@@ -264,6 +342,58 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---------------------------------------------------------------- salary
+
+  /// The first automatic salary comes on the next payday after today:
+  /// the balance entered today already contains this month's salary.
+  void _applySalary(double amount, int day) {
+    settings
+      ..salary = amount
+      ..salaryDay = day;
+    if (amount <= 0) {
+      settings.nextSalary = null;
+      return;
+    }
+    final now = DateTime.now();
+    settings.nextSalary = Installment.firstDueFrom(DateTime(now.year, now.month, now.day + 1), day);
+  }
+
+  Future<void> setSalary(double amount, int day) async {
+    _applySalary(amount, day);
+    await _saveSettings();
+  }
+
+  /// Add the salary for every payday that has arrived. Returns true if added.
+  Future<bool> processSalary() async {
+    final next = settings.nextSalary;
+    if (!settings.hasSalary || next == null) return false;
+    final today = dateOnly(DateTime.now());
+    var added = false;
+    var due = next;
+    while (!due.isAfter(today)) {
+      settings.balance += settings.salary;
+      txns.add(Txn(
+        id: _id(),
+        amount: settings.salary,
+        date: due.add(const Duration(hours: 8)),
+        type: TxnType.salary,
+      ));
+      due = dueDateIn(due.year, due.month + 1, settings.salaryDay);
+      added = true;
+    }
+    if (added) {
+      settings.nextSalary = due;
+      txns.sort((a, b) => b.date.compareTo(a.date));
+      await _storage.saveTxns(txns);
+      await _storage.saveSettings(settings);
+      await _notifications.showNow(
+        s.t('salaryAddedTitle'),
+        s.t('salaryAddedBody', {'x': s.money(settings.salary)}),
+      );
+    }
+    return added;
+  }
+
   // ---------------------------------------------------------------- expenses
 
   /// Preview what the day would look like after spending [amount] on [date].
@@ -286,7 +416,7 @@ class AppState extends ChangeNotifier {
     required double amount,
     required DateTime date,
     String note = '',
-    ExpenseCategory category = ExpenseCategory.other,
+    String category = 'other',
   }) async {
     final outcome = preview(amount, date);
     txns.add(Txn(id: _id(), amount: amount, date: date, note: note, category: category));
@@ -316,7 +446,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> deleteTxn(Txn t) async {
     txns.removeWhere((e) => e.id == t.id);
-    if (t.type == TxnType.deposit) {
+    if (t.isIncome) {
       settings.balance -= t.amount;
     } else {
       settings.balance += t.amount;
@@ -375,7 +505,7 @@ class AppState extends ChangeNotifier {
       amount: i.amount,
       date: auto ? i.nextDue.add(const Duration(hours: 9)) : DateTime.now(),
       note: i.id,
-      category: ExpenseCategory.bills,
+      category: 'bills',
       type: TxnType.installment,
     ));
     txns.sort((a, b) => b.date.compareTo(a.date));
@@ -401,14 +531,14 @@ class AppState extends ChangeNotifier {
   /// Returns true if anything was paid.
   Future<bool> processDueInstallments() async {
     final today = dateOnly(DateTime.now());
-    lastAutoPaid = [];
+    var paid = false;
     for (final i in installments) {
       while (!i.isFinished && !i.nextDue.isAfter(today)) {
         await payInstallment(i, auto: true);
-        lastAutoPaid.add(i);
+        paid = true;
       }
     }
-    return lastAutoPaid.isNotEmpty;
+    return paid;
   }
 
   // ---------------------------------------------------------------- outings
@@ -429,12 +559,11 @@ class AppState extends ChangeNotifier {
 
   List<MapEntry<DateTime, double>> get upcomingOutings {
     final today = dateOnly(DateTime.now());
-    final list = outings.entries
+    return outings.entries
         .map((e) => MapEntry(parseDayKey(e.key), e.value))
         .where((e) => !e.key.isBefore(today))
         .toList()
       ..sort((a, b) => a.key.compareTo(b.key));
-    return list;
   }
 
   // ---------------------------------------------------------------- reminders
@@ -465,6 +594,15 @@ class AppState extends ChangeNotifier {
         when: DateTime(o.key.year, o.key.month, o.key.day - 1, 12),
         title: s.t('outingDay'),
         body: s.t('i_outing_tomorrow', {'x': s.money(o.value)}),
+      ));
+    }
+    final pay = settings.nextSalary;
+    if (settings.hasSalary && pay != null) {
+      reminders.add(Reminder(
+        id: id++,
+        when: DateTime(pay.year, pay.month, pay.day - 1, 19),
+        title: s.t('salarySoonTitle'),
+        body: s.t('salarySoonBody', {'x': s.money(settings.salary)}),
       ));
     }
     await _notifications.reschedule(

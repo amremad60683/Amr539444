@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/assistant.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
-import 'home_screen.dart' show insightColor;
+import '../widgets/common.dart';
 
 class _Msg {
   _Msg(this.text, {required this.fromUser});
@@ -12,7 +12,7 @@ class _Msg {
   final bool fromUser;
 }
 
-/// Chat-style smart assistant with quick questions and live insights.
+/// Chat-style assistant: live reminders on top, quick questions at the bottom.
 class AssistantScreen extends StatefulWidget {
   const AssistantScreen({super.key});
 
@@ -32,7 +32,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scroll.hasClients) {
         _scroll.animateTo(_scroll.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+            duration: const Duration(milliseconds: 300), curve: easeOutExpo);
       }
     });
   }
@@ -47,94 +47,63 @@ class _AssistantScreenState extends State<AssistantScreen> {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final s = app.s;
+    final tk = context.tk;
     final a = Assistant(app);
     final insights = a.insights();
-    final scheme = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [AppColors.gradientStart, AppColors.gradientEnd]),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 20),
-            ),
-            const SizedBox(width: 10),
-            Text(s.t('assistantTitle')),
-          ],
-        ),
-      ),
-      body: Column(
+    Color levelColor(InsightLevel l) => switch (l) {
+          InsightLevel.danger => tk.danger,
+          InsightLevel.warning => tk.warn,
+          InsightLevel.good => tk.accent,
+          InsightLevel.info => tk.ink2,
+        };
+
+    return SafeArea(
+      bottom: false,
+      child: Column(
         children: [
           Expanded(
             child: ListView(
               controller: _scroll,
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               children: [
+                PageTitle(s.t('assistantTitle')),
+                const SizedBox(height: 12),
                 _Bubble(text: s.t('assistantIntro'), fromUser: false),
                 const SizedBox(height: 8),
-                // Live insights as a bot message.
                 Align(
                   alignment: AlignmentDirectional.centerStart,
-                  child: Container(
-                    constraints: const BoxConstraints(maxWidth: 340),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerLowest,
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(s.t('insights'), style: const TextStyle(fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 8),
-                        for (final i in insights)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(i.icon, size: 18, color: insightColor(context, i.level)),
-                                const SizedBox(width: 8),
-                                Expanded(child: Text(i.text)),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    child: Group(children: [
+                      for (final i in insights)
+                        Line(icon: i.icon, iconColor: levelColor(i.level), title: i.text),
+                    ]),
                   ),
                 ),
                 for (final m in _msgs) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   _Bubble(text: m.text, fromUser: m.fromUser),
                 ],
               ],
             ),
           ),
-          // Quick questions.
-          SafeArea(
-            top: false,
-            child: SizedBox(
-              height: 56,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                children: [
-                  for (final q in AssistantQuestion.values)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: ActionChip(
-                        label: Text(a.questionLabel(q)),
-                        onPressed: () => _ask(a, q),
-                      ),
+          Container(
+            decoration: BoxDecoration(border: Border(top: BorderSide(color: tk.line))),
+            height: 60,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              children: [
+                for (final q in AssistantQuestion.values)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: ActionChip(
+                      label: Text(a.questionLabel(q), style: AppType.label.copyWith(color: tk.ink)),
+                      onPressed: () => _ask(a, q),
                     ),
-                ],
-              ),
+                  ),
+              ],
             ),
           ),
         ],
@@ -150,17 +119,18 @@ class _Bubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final tk = context.tk;
     return Align(
       alignment: fromUser ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
       child: Container(
         constraints: const BoxConstraints(maxWidth: 320),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: fromUser ? scheme.primary : scheme.surfaceContainerLowest,
+          color: fromUser ? tk.ink : tk.surface,
+          border: fromUser ? null : Border.all(color: tk.line),
           borderRadius: BorderRadius.circular(18),
         ),
-        child: Text(text, style: TextStyle(color: fromUser ? scheme.onPrimary : scheme.onSurface)),
+        child: Text(text, style: AppType.body.copyWith(color: fromUser ? tk.bg : tk.ink)),
       ),
     );
   }

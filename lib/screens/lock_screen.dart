@@ -1,8 +1,11 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import '../theme.dart';
+import '../widgets/common.dart';
 
 /// PIN entry screen (only shown when a PIN is set).
 class LockScreen extends StatefulWidget {
@@ -18,6 +21,7 @@ class _LockScreenState extends State<LockScreen> {
 
   void _tap(String d) {
     if (_pin.length >= 4) return;
+    HapticFeedback.selectionClick();
     setState(() {
       _pin += d;
       _error = false;
@@ -36,42 +40,61 @@ class _LockScreenState extends State<LockScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final s = context.read<AppState>().s;
-    final scheme = Theme.of(context).colorScheme;
+    final app = context.read<AppState>();
+    final s = app.s;
+    final tk = context.tk;
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
             const Spacer(),
-            Icon(Icons.lock_rounded, size: 56, color: scheme.primary),
-            const SizedBox(height: 16),
-            Text(s.t('enterPin'), style: Theme.of(context).textTheme.titleLarge),
+            BrandMark(size: 56, isAr: app.isAr),
             const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(
-                4,
-                (i) => Container(
-                  margin: const EdgeInsets.all(8),
-                  width: 16,
-                  height: 16,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: i < _pin.length ? scheme.primary : scheme.outlineVariant,
-                  ),
-                ),
+            Text(s.t('enterPin'), style: AppType.title.copyWith(color: tk.ink)),
+            const SizedBox(height: 20),
+            PinDots(length: _pin.length),
+            SizedBox(
+              height: 32,
+              child: Center(
+                child: _error ? Text(s.t('wrongPin'), style: AppType.label.copyWith(color: tk.danger)) : null,
               ),
             ),
-            SizedBox(
-              height: 28,
-              child: _error ? Text(s.t('wrongPin'), style: TextStyle(color: scheme.error)) : null,
-            ),
             const Spacer(),
-            PinPad(onDigit: _tap, onBackspace: () {
-              if (_pin.isNotEmpty) setState(() => _pin = _pin.substring(0, _pin.length - 1));
-            }),
+            PinPad(
+              onDigit: _tap,
+              onBackspace: () {
+                if (_pin.isNotEmpty) setState(() => _pin = _pin.substring(0, _pin.length - 1));
+              },
+            ),
             const SizedBox(height: 32),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class PinDots extends StatelessWidget {
+  const PinDots({super.key, required this.length});
+  final int length;
+
+  @override
+  Widget build(BuildContext context) {
+    final tk = context.tk;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(
+        4,
+        (i) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          margin: const EdgeInsets.all(9),
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: i < length ? tk.ink : Colors.transparent,
+            border: Border.all(color: i < length ? tk.ink : tk.lineStrong, width: 1.5),
+          ),
         ),
       ),
     );
@@ -85,12 +108,25 @@ class PinPad extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget key(Widget child, VoidCallback? onTap) => SizedBox(
-          width: 80,
-          height: 72,
-          child: InkWell(borderRadius: BorderRadius.circular(40), onTap: onTap, child: Center(child: child)),
+    final tk = context.tk;
+    Widget key(Widget child, VoidCallback? onTap, {String? label}) => Padding(
+          padding: const EdgeInsets.all(8),
+          child: Semantics(
+            button: onTap != null,
+            label: label,
+            child: Material(
+              color: onTap == null ? Colors.transparent : tk.surface,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: onTap,
+                child: SizedBox(width: 72, height: 72, child: Center(child: child)),
+              ),
+            ),
+          ),
         );
-    Widget digit(String d) => key(Text(d, style: Theme.of(context).textTheme.headlineSmall), () => onDigit(d));
+    Widget digit(String d) =>
+        key(Text(d, style: AppType.page.copyWith(color: tk.ink, fontWeight: FontWeight.w500)), () => onDigit(d));
     return Directionality(
       textDirection: TextDirection.ltr,
       child: Column(
@@ -106,7 +142,7 @@ class PinPad extends StatelessWidget {
             children: [
               key(const SizedBox(), null),
               digit('0'),
-              key(const Icon(Icons.backspace_outlined), onBackspace),
+              key(Icon(CupertinoIcons.delete_left, color: tk.ink2), onBackspace, label: 'Backspace'),
             ],
           ),
         ],
