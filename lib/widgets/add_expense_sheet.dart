@@ -209,8 +209,8 @@ class _CatChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final tk = context.tk;
     return ChoiceChip(
-      avatar: Icon(cat.icon, size: 16, color: selected ? tk.bg : tk.ink2),
-      label: Text(label, style: AppType.label.copyWith(color: selected ? tk.bg : tk.ink)),
+      avatar: Icon(cat.icon, size: 16, color: selected ? Colors.white : cat.color),
+      label: Text(label, style: AppType.label.copyWith(color: selected ? Colors.white : tk.ink)),
       selected: selected,
       onSelected: (_) => onTap(),
     );
@@ -284,10 +284,10 @@ class _CategoryEditorState extends State<_CategoryEditor> {
                         width: 44,
                         height: 44,
                         decoration: BoxDecoration(
-                          color: _icon == e.key ? tk.ink : tk.raised,
+                          color: _icon == e.key ? tk.accent : tk.raised,
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Icon(e.value, size: 20, color: _icon == e.key ? tk.bg : tk.ink2),
+                        child: Icon(e.value, size: 20, color: _icon == e.key ? Colors.white : tk.ink2),
                       ),
                     ),
                   ),

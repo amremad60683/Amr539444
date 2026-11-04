@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:app_links/app_links.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -10,6 +12,7 @@ import 'screens/home_shell.dart';
 import 'screens/lock_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/splash_screen.dart';
+import 'services/bank_sms.dart';
 import 'services/notification_service.dart';
 import 'services/storage_service.dart';
 import 'state/app_state.dart';
@@ -30,10 +33,18 @@ Future<void> bootstrap(AppState app) async {
 }
 
 class MasrofyApp extends StatelessWidget {
-  const MasrofyApp({super.key, this.boot = bootstrap, this.minSplash = const Duration(milliseconds: 1100)});
+  const MasrofyApp({
+    super.key,
+    this.boot = bootstrap,
+    this.minSplash = const Duration(milliseconds: 1100),
+    this.listenLinks = true,
+  });
 
   final Future<void> Function(AppState) boot;
   final Duration minSplash;
+
+  /// Listen for masrofy://bank links (off in tests).
+  final bool listenLinks;
 
   @override
   Widget build(BuildContext context) {
@@ -55,20 +66,22 @@ class MasrofyApp extends StatelessWidget {
       builder: (context, child) {
         final dark = Theme.of(context).brightness == Brightness.dark;
         return AnnotatedRegion<SystemUiOverlayStyle>(
-          value: dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+          value: (dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+              .copyWith(statusBarColor: Colors.transparent),
           child: child!,
         );
       },
-      home: Root(boot: boot, minSplash: minSplash),
+      home: Root(boot: boot, minSplash: minSplash, listenLinks: listenLinks),
     );
   }
 }
 
 /// Splash while loading, then onboarding, lock or the app.
 class Root extends StatefulWidget {
-  const Root({super.key, required this.boot, required this.minSplash});
+  const Root({super.key, required this.boot, required this.minSplash, this.listenLinks = true});
   final Future<void> Function(AppState) boot;
   final Duration minSplash;
+  final bool listenLinks;
 
   @override
   State<Root> createState() => _RootState();
@@ -76,6 +89,7 @@ class Root extends StatefulWidget {
 
 class _RootState extends State<Root> with WidgetsBindingObserver {
   bool _splashDone = false;
+  StreamSubscription<Uri>? _links;
 
   @override
   void initState() {
@@ -93,10 +107,30 @@ class _RootState extends State<Root> with WidgetsBindingObserver {
       Future<void>.delayed(widget.minSplash),
     ]);
     if (mounted) setState(() => _splashDone = true);
+    if (widget.listenLinks) _listenLinks(app);
+  }
+
+  /// Bank messages arrive as masrofy://bank?text=... from an iPhone Shortcut.
+  Future<void> _listenLinks(AppState app) async {
+    if (kIsWeb) return;
+    try {
+      final links = AppLinks();
+      final first = await links.getInitialLink();
+      if (first != null) _onLink(app, first);
+      _links = links.uriLinkStream.listen((u) => _onLink(app, u));
+    } catch (e) {
+      debugPrint('Links unavailable: $e');
+    }
+  }
+
+  void _onLink(AppState app, Uri uri) {
+    final text = textFromBankLink(uri);
+    if (text != null && app.settings.onboarded) app.receiveBankText(text);
   }
 
   @override
   void dispose() {
+    _links?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

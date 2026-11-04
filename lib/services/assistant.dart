@@ -46,7 +46,7 @@ class Assistant {
     if (app.settings.safetyBalance > 0 &&
         plan.daysAfterToday > 0 &&
         plan.projectedAt(plan.averageDaily) < app.settings.safetyBalance) {
-      out.add(Insight(s.t('i_below_safety', {'x': s.money(plan.safeDaily)}), InsightLevel.warning,
+      out.add(Insight(s.t('i_below_safety', {'x': s.money(plan.safeDaily.floorToDouble())}), InsightLevel.warning,
           CupertinoIcons.chart_bar));
     }
 

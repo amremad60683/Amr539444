@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -31,8 +32,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scroll.hasClients) {
-        _scroll.animateTo(_scroll.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300), curve: easeOutExpo);
+        _scroll.animateTo(_scroll.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: easeOutExpo);
       }
     });
   }
@@ -54,56 +54,74 @@ class _AssistantScreenState extends State<AssistantScreen> {
     Color levelColor(InsightLevel l) => switch (l) {
           InsightLevel.danger => tk.danger,
           InsightLevel.warning => tk.warn,
-          InsightLevel.good => tk.accent,
-          InsightLevel.info => tk.ink2,
+          InsightLevel.good => tk.good,
+          InsightLevel.info => tk.dark ? tk.ink2 : tk.primaryEnd,
         };
 
-    return SafeArea(
-      bottom: false,
-      child: Column(
+    return Scaffold(
+      appBar: AppBar(title: Text(s.t('assistantTitle'))),
+      body: Column(
         children: [
           Expanded(
             child: ListView(
               controller: _scroll,
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               children: [
-                PageTitle(s.t('assistantTitle')),
-                const SizedBox(height: 12),
-                _Bubble(text: s.t('assistantIntro'), fromUser: false),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 360),
-                    child: Group(children: [
-                      for (final i in insights)
-                        Line(icon: i.icon, iconColor: levelColor(i.level), title: i.text),
-                    ]),
+                HeroCard(
+                  padding: const EdgeInsets.all(18),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Icon(CupertinoIcons.chat_bubble_2_fill, color: Colors.white),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(s.t('assistantIntro'), style: AppType.body.copyWith(color: Colors.white)),
+                      ),
+                    ],
                   ),
                 ),
+                const SizedBox(height: 14),
+                Group(indent: 68, children: [
+                  for (final i in insights) Line(icon: i.icon, iconColor: levelColor(i.level), title: i.text),
+                ]),
                 for (final m in _msgs) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   _Bubble(text: m.text, fromUser: m.fromUser),
                 ],
               ],
             ),
           ),
           Container(
-            decoration: BoxDecoration(border: Border(top: BorderSide(color: tk.line))),
-            height: 60,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              children: [
-                for (final q in AssistantQuestion.values)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: ActionChip(
-                      label: Text(a.questionLabel(q), style: AppType.label.copyWith(color: tk.ink)),
-                      onPressed: () => _ask(a, q),
-                    ),
-                  ),
-              ],
+            decoration: BoxDecoration(color: tk.surface, border: Border(top: BorderSide(color: tk.line))),
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                height: 64,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  children: [
+                    for (final q in AssistantQuestion.values)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: ActionChip(
+                          backgroundColor: tk.raised,
+                          side: BorderSide.none,
+                          label: Text(a.questionLabel(q),
+                              style: AppType.label.copyWith(color: tk.ink, fontWeight: FontWeight.w700)),
+                          onPressed: () => _ask(a, q),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
         ],
@@ -120,17 +138,23 @@ class _Bubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tk = context.tk;
+    final r = const Radius.circular(20);
     return Align(
       alignment: fromUser ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
       child: Container(
         constraints: const BoxConstraints(maxWidth: 320),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: fromUser ? tk.ink : tk.surface,
-          border: fromUser ? null : Border.all(color: tk.line),
-          borderRadius: BorderRadius.circular(18),
+          color: fromUser ? (tk.dark ? tk.primaryEnd : tk.primary) : tk.surface,
+          boxShadow: fromUser ? null : tk.cardShadow,
+          borderRadius: BorderRadiusDirectional.only(
+            topStart: r,
+            topEnd: r,
+            bottomStart: fromUser ? r : const Radius.circular(6),
+            bottomEnd: fromUser ? const Radius.circular(6) : r,
+          ),
         ),
-        child: Text(text, style: AppType.body.copyWith(color: fromUser ? tk.bg : tk.ink)),
+        child: Text(text, style: AppType.body.copyWith(color: fromUser ? Colors.white : tk.ink)),
       ),
     );
   }

@@ -83,3 +83,32 @@ const builtInCategories = <CategoryDef>[
   CategoryDef(id: 'study', ar: 'دراسة', en: 'Study', iconKey: 'book'),
   CategoryDef(id: 'other', ar: 'أخرى', en: 'Other', iconKey: 'more'),
 ];
+
+/// One hue per category, used for its icon tile and its bar.
+const _categoryColors = <String, Color>{
+  'food': Color(0xFFF2763A),
+  'transport': Color(0xFF3B82F6),
+  'shopping': Color(0xFF8B5CF6),
+  'clothes': Color(0xFFEC4899),
+  'beauty': Color(0xFFDB2777),
+  'salon': Color(0xFFA855F7),
+  'bills': Color(0xFF0EA5E9),
+  'mobile': Color(0xFF06B6D4),
+  'home': Color(0xFF65A30D),
+  'fun': Color(0xFFF59E0B),
+  'gifts': Color(0xFFEF4444),
+  'health': Color(0xFF10B981),
+  'kids': Color(0xFFEAB308),
+  'study': Color(0xFF6366F1),
+  'other': Color(0xFF8A8FA8),
+};
+
+const _customPalette = [
+  Color(0xFF14B8A6), Color(0xFFF43F5E), Color(0xFF0EA5E9), Color(0xFFA855F7),
+  Color(0xFF84CC16), Color(0xFFF97316), Color(0xFF6366F1), Color(0xFFEC4899),
+];
+
+extension CategoryColor on CategoryDef {
+  Color get color =>
+      _categoryColors[id] ?? _customPalette[id.codeUnits.fold(0, (a, c) => a + c) % _customPalette.length];
+}

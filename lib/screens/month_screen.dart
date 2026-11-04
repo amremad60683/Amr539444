@@ -4,14 +4,15 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/category.dart';
 import '../models/installment.dart';
 import '../services/date_utils.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
-/// The cycle until payday (or month end): salary, what's left at the end,
-/// the safety balance, where the money went and the installments.
+/// The cycle until payday (or month end): what's left at the end, the safe
+/// daily spend, salary, where the money went and the installments.
 class MonthScreen extends StatelessWidget {
   const MonthScreen({super.key});
 
@@ -28,19 +29,19 @@ class MonthScreen extends StatelessWidget {
         : s.t('cycleMonth', {'from': s.dayMonth(p.cycleStart), 'to': s.dayMonth(lastDay)});
     final cats = app.spentByCategory(p.cycleStart, DateTime.now());
     final catTotal = cats.fold(0.0, (a, e) => a + e.value);
-    final avg = p.averageDaily;
+    final avg = p.averageDaily.roundToDouble();
+    final pace = avg > 0 ? avg : st.minDaily;
+    final end = p.projectedAt(pace);
+    final belowSafety = st.safetyBalance > 0 && end < st.safetyBalance;
 
-    Widget projection(String label, double perDay) {
-      final end = p.projectedAt(perDay);
-      final risky = end < st.safetyBalance || end < 0;
+    Widget scenario(String label, double perDay) {
+      final v = p.projectedAt(perDay);
+      final risky = v < st.safetyBalance || v < 0;
       return Line(
         title: label,
         trailing: Reveal(
           bone: const Bone(width: 70, height: 16),
-          child: Text(
-            s.money(end),
-            style: AppType.bodyStrong.copyWith(color: risky ? tk.danger : tk.ink),
-          ),
+          child: Text(s.money(v), style: AppType.bodyStrong.copyWith(color: risky ? tk.danger : tk.ink)),
         ),
       );
     }
@@ -48,77 +49,147 @@ class MonthScreen extends StatelessWidget {
     return SafeArea(
       bottom: false,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 130),
         children: [
           PageTitle(s.t('monthTitle'), subtitle: subtitle),
-          const SizedBox(height: 12),
-          FigureStrip(figures: [
-            Figure(label: s.t('spentCycle'), value: s.money(p.spent)),
-            Figure(label: s.t('instCycle'), value: s.money(p.installmentsPaid + p.installmentsDue)),
-            Figure(label: s.t('daysLeft'), value: s.t('daysN', {'d': p.daysLeft}), boneWidth: 48),
-          ]),
+          const SizedBox(height: 10),
 
-          // ---------------------------------------------------- end of cycle
-          SectionHeader(p.salaryBased ? s.t('endSalary') : s.t('endMonth')),
-          Panel(
-            padding: EdgeInsets.zero,
+          // ---------------------------------------------------- hero: end of cycle
+          HeroCard(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-                  child: Text(s.t('fromTomorrow'), style: AppType.label.copyWith(color: tk.ink3)),
-                ),
-                projection(s.t('atTarget', {'x': s.num0(st.minDaily)}), st.minDaily),
-                const Divider(indent: 16, endIndent: 16),
-                if (avg > 0) ...[
-                  projection(s.t('atAvg', {'x': s.num0(avg.roundToDouble())}), avg.roundToDouble()),
-                  const Divider(indent: 16, endIndent: 16),
-                ],
-                projection(s.t('atMax', {'x': s.num0(st.maxDaily)}), st.maxDaily),
-                Divider(color: tk.line),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: st.safetyBalance > 0 && p.free <= st.safetyBalance
-                      ? Note(
-                          icon: CupertinoIcons.exclamationmark_triangle,
-                          text: s.t('safeDailyZero', {'safe': s.money(st.safetyBalance)}),
-                          color: tk.danger,
-                        )
-                      : Text(
-                          s.t('safeDaily', {
-                            'safe': s.money(st.safetyBalance),
-                            'x': s.money(p.safeDaily.floorToDouble()),
-                          }),
-                          style: AppType.body.copyWith(color: tk.ink),
+                Text(p.salaryBased ? s.t('endSalary') : s.t('endMonth'),
+                    style: AppType.body.copyWith(color: tk.onPrimary2)),
+                SizedBox(
+                  height: 54,
+                  child: Reveal(
+                    bone: Bone(width: 150, height: 40, radius: 10, color: Colors.white.withValues(alpha: 0.14)),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text.rich(TextSpan(children: [
+                        TextSpan(
+                          text: s.num0(end),
+                          style: AppType.lead.copyWith(color: belowSafety ? Tokens.heroDanger : Colors.white, fontSize: 40),
                         ),
+                        TextSpan(text: '  ${s.currency}', style: AppType.body.copyWith(color: tk.onPrimary2)),
+                      ])),
+                    ),
+                  ),
+                ),
+                Text('${s.t('atYourPace')} · ${s.money(pace)}',
+                    style: AppType.label.copyWith(color: tk.onPrimary2)),
+                const SizedBox(height: 16),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.09),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Row(
+                    children: [
+                      for (final (i, f) in [
+                        (s.t('spentCycle'), s.money(p.spent)),
+                        (s.t('instCycle'), s.money(p.installmentsPaid + p.installmentsDue)),
+                        (s.t('daysLeft'), s.t('daysN', {'d': p.daysLeft})),
+                      ].indexed)
+                        Expanded(
+                          child: Container(
+                            height: 72,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: i == 0
+                                ? null
+                                : BoxDecoration(
+                                    border: BorderDirectional(
+                                        start: BorderSide(color: Colors.white.withValues(alpha: 0.12))),
+                                  ),
+                            child: Figure(
+                              label: f.$1,
+                              value: f.$2,
+                              labelColor: tk.onPrimary2,
+                              color: Colors.white,
+                              boneColor: Colors.white.withValues(alpha: 0.14),
+                              boneWidth: 60,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 8),
-          Group(children: [
-            Line(
-              icon: CupertinoIcons.lock,
-              title: s.t('safety'),
-              subtitle: s.t('safetyHelp'),
-              trailing: Text(
-                st.safetyBalance > 0 ? s.money(st.safetyBalance) : s.t('safetyNone'),
-                style: AppType.body.copyWith(color: st.safetyBalance > 0 ? tk.ink : tk.ink3),
-              ),
-              chevron: true,
-              onTap: () async {
-                final v = await askAmount(context, s,
-                    title: s.t('safety'), helper: s.t('safetyHelp'), initial: st.safetyBalance, allowZero: true);
-                if (v != null) await app.setSafetyBalance(v);
-              },
+
+          // ---------------------------------------------------- safe per day
+          const SizedBox(height: 14),
+          Panel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    IconTile(icon: CupertinoIcons.lock_shield, color: belowSafety ? tk.danger : tk.good),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(s.t('perDaySafe'), style: AppType.label.copyWith(color: tk.ink3)),
+                          Text(s.money(p.safeDaily.floorToDouble()),
+                              style: AppType.figure.copyWith(color: belowSafety ? tk.danger : tk.ink)),
+                        ],
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        final v = await askAmount(context, s,
+                            title: s.t('safety'), helper: s.t('safetyHelp'), initial: st.safetyBalance, allowZero: true);
+                        if (v != null) await app.setSafetyBalance(v);
+                      },
+                      child: Text(s.t('edit')),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  st.safetyBalance > 0 && p.free <= st.safetyBalance
+                      ? s.t('safeDailyZero', {'safe': s.money(st.safetyBalance)})
+                      : s.t('safeDaily', {'safe': s.money(st.safetyBalance), 'x': s.money(p.safeDaily.floorToDouble())}),
+                  style: AppType.label.copyWith(color: tk.ink2),
+                ),
+                const SizedBox(height: 12),
+                // How far the balance is above the safety balance.
+                _Bar(
+                  value: st.safetyBalance <= 0 ? 1 : (st.safetyBalance / max(1, p.free)).clamp(0, 1).toDouble(),
+                  color: belowSafety ? tk.danger : tk.accent,
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('${s.t('safety')} ${st.safetyBalance > 0 ? s.money(st.safetyBalance) : s.t('safetyNone')}',
+                          style: AppType.meta.copyWith(color: tk.ink3)),
+                    ),
+                    Text(s.money(p.free), style: AppType.meta.copyWith(color: tk.ink3)),
+                  ],
+                ),
+              ],
             ),
+          ),
+
+          // ---------------------------------------------------- scenarios
+          SectionHeader(s.t('fromTomorrow')),
+          Group(children: [
+            scenario(s.t('atTarget', {'x': s.num0(st.minDaily)}), st.minDaily),
+            if (avg > 0) scenario(s.t('atAvg', {'x': s.num0(avg)}), avg),
+            scenario(s.t('atMax', {'x': s.num0(st.maxDaily)}), st.maxDaily),
           ]),
 
           // ---------------------------------------------------- salary
           SectionHeader(s.t('salaryTitle')),
           if (!st.hasSalary)
             EmptyBlock(
+              icon: CupertinoIcons.money_pound_circle,
               text: s.t('salaryNone'),
               action: s.t('addSalary'),
               onAction: () => showSalarySheet(context),
@@ -126,7 +197,7 @@ class MonthScreen extends StatelessWidget {
           else
             Group(children: [
               Line(
-                icon: CupertinoIcons.money_pound_circle,
+                leading: IconTile(icon: CupertinoIcons.money_pound_circle, color: tk.good),
                 title: s.t('salaryLine', {'x': s.money(st.salary), 'd': st.salaryDay}),
                 subtitle: st.nextSalary == null ? null : s.t('nextPayday', {'date': s.dayMonth(st.nextSalary!)}),
                 chevron: true,
@@ -139,15 +210,19 @@ class MonthScreen extends StatelessWidget {
           if (cats.isEmpty)
             EmptyBlock(text: s.t('noSpending'))
           else
-            Group(children: [
-              for (final e in cats.take(8))
-                _CategoryRow(
-                  icon: e.key.icon,
-                  label: e.key.label(app.isAr),
-                  amount: s.money(e.value),
-                  share: catTotal == 0 ? 0 : e.value / catTotal,
-                ),
-            ]),
+            Panel(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(children: [
+                for (final e in cats.take(8))
+                  _CategoryRow(
+                    icon: e.key.icon,
+                    color: e.key.color,
+                    label: e.key.label(app.isAr),
+                    amount: s.money(e.value),
+                    share: catTotal == 0 ? 0 : e.value / catTotal,
+                  ),
+              ]),
+            ),
 
           // ---------------------------------------------------- installments
           SectionHeader(s.t('installments'), action: s.t('addInstallment'), onAction: () => showInstallmentSheet(context)),
@@ -158,9 +233,41 @@ class MonthScreen extends StatelessWidget {
   }
 }
 
+class _Bar extends StatelessWidget {
+  const _Bar({required this.value, required this.color});
+  final double value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final tk = context.tk;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: SizedBox(
+        height: 8,
+        child: Stack(children: [
+          Container(color: tk.raised),
+          FractionallySizedBox(
+            widthFactor: max(0.02, value),
+            alignment: AlignmentDirectional.centerStart,
+            child: Container(decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4))),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
 class _CategoryRow extends StatelessWidget {
-  const _CategoryRow({required this.icon, required this.label, required this.amount, required this.share});
+  const _CategoryRow({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.amount,
+    required this.share,
+  });
   final IconData icon;
+  final Color color;
   final String label;
   final String amount;
   final double share;
@@ -169,32 +276,33 @@ class _CategoryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final tk = context.tk;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 18, color: tk.ink2),
-              const SizedBox(width: 12),
-              Expanded(child: Text(label, style: AppType.body.copyWith(color: tk.ink))),
-              Text('${(share * 100).round()}%', style: AppType.label.copyWith(color: tk.ink3)),
-              const SizedBox(width: 12),
-              Text(amount, style: AppType.bodyStrong.copyWith(color: tk.ink)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: SizedBox(
-              height: 4,
-              child: Stack(children: [
-                Container(color: tk.raised),
-                FractionallySizedBox(
-                  widthFactor: max(0.02, share),
-                  alignment: AlignmentDirectional.centerStart,
-                  child: Container(color: tk.accent),
+          IconTile(icon: icon, color: color, size: 40),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: Text(label, style: AppType.bodyStrong.copyWith(color: tk.ink))),
+                    Text(amount, style: AppType.bodyStrong.copyWith(color: tk.ink)),
+                  ],
                 ),
-              ]),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(child: _Bar(value: share, color: color)),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 36,
+                      child: Text('${(share * 100).round()}%',
+                          textAlign: TextAlign.end, style: AppType.meta.copyWith(color: tk.ink3)),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
@@ -218,6 +326,7 @@ class _Installments extends StatelessWidget {
 
     if (list.isEmpty) {
       return EmptyBlock(
+        icon: CupertinoIcons.calendar,
         text: '${s.t('noInstallments')}. ${s.t('instAutoNote')}',
         action: s.t('addInstallment'),
         onAction: () => showInstallmentSheet(context),
@@ -230,8 +339,7 @@ class _Installments extends StatelessWidget {
           Figure(label: s.t('totalMonthly'), value: s.money(app.monthlyInstallments)),
           Figure(label: s.t('totalRemaining'), value: s.money(app.remainingInstallments)),
         ]),
-        const SizedBox(height: 8),
-        Group(children: [for (final i in list) _InstallmentRow(i)]),
+        for (final i in list) ...[const SizedBox(height: 10), _InstallmentCard(i)],
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 10, 4, 0),
           child: Text(s.t('instAutoNote'), style: AppType.meta.copyWith(color: tk.ink3)),
@@ -241,8 +349,8 @@ class _Installments extends StatelessWidget {
   }
 }
 
-class _InstallmentRow extends StatelessWidget {
-  const _InstallmentRow(this.i);
+class _InstallmentCard extends StatelessWidget {
+  const _InstallmentCard(this.i);
   final Installment i;
 
   @override
@@ -253,53 +361,51 @@ class _InstallmentRow extends StatelessWidget {
     final days = dateOnly(i.nextDue).difference(dateOnly(DateTime.now())).inDays;
     final soon = !i.isFinished && days <= 3;
 
-    return InkWell(
-      onLongPress: () => _menu(context),
+    return Panel(
       onTap: () => _menu(context),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(i.name, style: AppType.bodyStrong.copyWith(color: tk.ink)),
-                ),
-                Text(s.money(i.amount), style: AppType.bodyStrong.copyWith(color: tk.ink)),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    i.isFinished ? s.t('finished') : s.t('instLeft', {'n': i.remaining, 't': i.total}),
-                    style: AppType.label.copyWith(color: i.isFinished ? tk.accent : tk.ink3),
-                  ),
-                ),
-                if (!i.isFinished)
-                  Text(
-                    s.t('instDue', {'date': s.shortDate(i.nextDue)}),
-                    style: AppType.label.copyWith(
-                      color: soon ? tk.warn : tk.ink3,
-                      fontWeight: soon ? FontWeight.w700 : FontWeight.w400,
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(
-                value: i.total == 0 ? 1 : i.paid / i.total,
-                minHeight: 4,
-                backgroundColor: tk.raised,
-                color: i.isFinished ? tk.accent : tk.ink2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconTile(
+                icon: i.isFinished ? CupertinoIcons.checkmark_alt : CupertinoIcons.calendar,
+                color: i.isFinished ? tk.good : tk.accent,
               ),
-            ),
-          ],
-        ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(i.name, style: AppType.bodyStrong.copyWith(color: tk.ink)),
+                    Text(
+                      i.isFinished ? s.t('finished') : s.t('instDue', {'date': s.shortDate(i.nextDue)}),
+                      style: AppType.label.copyWith(
+                        color: i.isFinished ? tk.good : (soon ? tk.warn : tk.ink3),
+                        fontWeight: soon ? FontWeight.w800 : FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(s.money(i.amount), style: AppType.figure.copyWith(color: tk.ink, fontSize: 18)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _Bar(value: i.total == 0 ? 1 : i.paid / i.total, color: i.isFinished ? tk.good : tk.accent),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(s.t('instLeft', {'n': i.remaining, 't': i.total}),
+                    style: AppType.meta.copyWith(color: tk.ink3)),
+              ),
+              if (!i.isFinished)
+                Text(s.t('instRemainingAmount', {'x': s.money(i.remainingAmount)}),
+                    style: AppType.meta.copyWith(color: tk.ink3)),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -323,7 +429,12 @@ class _InstallmentRow extends StatelessWidget {
               ),
               Group(children: [
                 if (!i.isFinished)
-                  Line(icon: CupertinoIcons.checkmark_circle, title: s.t('payNow'), onTap: () => Navigator.pop(ctx, 'pay')),
+                  Line(
+                    icon: CupertinoIcons.checkmark_circle,
+                    iconColor: tk.good,
+                    title: s.t('payNow'),
+                    onTap: () => Navigator.pop(ctx, 'pay'),
+                  ),
                 Line(
                   icon: CupertinoIcons.trash,
                   iconColor: tk.danger,

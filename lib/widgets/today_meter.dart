@@ -14,9 +14,12 @@ import 'common.dart';
 /// On first reveal the fill runs from zero to today's spending: the one
 /// authored motion in the app, and it explains the number above it.
 class TodayMeter extends StatelessWidget {
-  const TodayMeter({super.key, required this.day, required this.s});
+  const TodayMeter({super.key, required this.day, required this.s, this.onHero = false});
   final DayBudget day;
   final S s;
+
+  /// Colours for the navy hero card.
+  final bool onHero;
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +27,11 @@ class TodayMeter extends StatelessWidget {
     final revealed = RevealScope.of(context);
     final rtl = Directionality.of(context) == TextDirection.rtl;
     final scaleMax = max(day.allowance, day.spent) * 1.0;
-    final color = tk.forStatus(day.status);
+    final color = onHero ? Tokens.onHero(day.status) : tk.forStatus(day.status);
+    final track = onHero ? Colors.white.withValues(alpha: 0.16) : tk.raised;
+    final tickColor = onHero ? Colors.white : tk.ink2;
+    final overColor = onHero ? Tokens.heroDanger : tk.danger;
+    final labelColor = onHero ? tk.onPrimary2 : tk.ink3;
 
     return LayoutBuilder(builder: (context, c) {
       final w = c.maxWidth;
@@ -45,7 +52,7 @@ class TodayMeter extends StatelessWidget {
           child: Text(
             text,
             textAlign: TextAlign.center,
-            style: AppType.meta.copyWith(color: tk.ink3),
+            style: AppType.meta.copyWith(color: labelColor),
             maxLines: 1,
             overflow: TextOverflow.fade,
           ),
@@ -68,9 +75,9 @@ class TodayMeter extends StatelessWidget {
                   target: day.target,
                   scaleMax: scaleMax,
                   fill: color,
-                  track: tk.raised,
-                  tick: tk.ink2,
-                  over: tk.danger,
+                  track: track,
+                  tick: tickColor,
+                  over: overColor,
                   rtl: rtl,
                 ),
               ),
@@ -112,7 +119,7 @@ class _MeterPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const h = 12.0;
+    const h = 14.0;
     final top = (size.height - h) / 2;
     final w = size.width;
     double px(double v) => scaleMax <= 0 ? 0 : (v / scaleMax).clamp(0.0, 1.0) * w;
@@ -213,14 +220,14 @@ class WeekBars extends StatelessWidget {
                               duration: Duration(milliseconds: reduceMotion(context) ? 0 : 600),
                               curve: easeOutExpo,
                               height: revealed ? max(3.0, d.spent / maxVal * h) : 3,
-                              margin: const EdgeInsets.symmetric(horizontal: 7),
+                              margin: const EdgeInsets.symmetric(horizontal: 6),
                               decoration: BoxDecoration(
                                 color: d.status == BudgetStatus.over
                                     ? tk.danger
                                     : sameDay(d.day, now)
                                         ? tk.accent
-                                        : tk.lineStrong,
-                                borderRadius: BorderRadius.circular(4),
+                                        : (tk.dark ? tk.lineStrong : const Color(0xFFD9DAF0)),
+                                borderRadius: BorderRadius.circular(8),
                               ),
                             ),
                           ),

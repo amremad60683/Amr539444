@@ -8,7 +8,7 @@ class AppSettings {
     this.maxDaily = 250,
     this.lang = 'ar',
     this.gender = 'm',
-    this.themeMode = 'dark',
+    this.themeMode = 'light',
     this.pinHash,
     this.notifications = true,
     this.reminderHour = 21,
@@ -19,8 +19,14 @@ class AppSettings {
     this.nextSalary,
     this.safetyBalance = 0,
     List<CategoryDef>? customCategories,
+    this.biometrics = false,
+    this.bankSyncBalance = true,
+    this.bankAutoAdd = false,
+    this.lastBankSync,
+    List<String>? bankSeen,
   })  : startDate = startDate ?? DateTime.now(),
-        customCategories = customCategories ?? [];
+        customCategories = customCategories ?? [],
+        bankSeen = bankSeen ?? [];
 
   String name;
 
@@ -40,7 +46,7 @@ class AppSettings {
   /// 'm' or 'f'. Only changes how the Arabic text addresses the user.
   String gender;
 
-  /// 'dark', 'light' or 'system'.
+  /// 'light', 'dark' or 'system'.
   String themeMode;
 
   /// SHA-256 of the optional 4-digit PIN.
@@ -68,6 +74,21 @@ class AppSettings {
 
   List<CategoryDef> customCategories;
 
+  /// Unlock with Face ID / fingerprint as well as the PIN.
+  bool biometrics;
+
+  /// When a bank message includes the available balance, use it as the balance.
+  bool bankSyncBalance;
+
+  /// Add bank messages without asking.
+  bool bankAutoAdd;
+
+  /// Last time a bank message updated the app.
+  DateTime? lastBankSync;
+
+  /// Fingerprints of bank messages already handled (so none is added twice).
+  List<String> bankSeen;
+
   bool get hasSalary => salary > 0;
 
   Map<String, dynamic> toJson() => {
@@ -88,6 +109,11 @@ class AppSettings {
         'nextSalary': nextSalary?.toIso8601String(),
         'safetyBalance': safetyBalance,
         'customCategories': customCategories.map((c) => c.toJson()).toList(),
+        'biometrics': biometrics,
+        'bankSyncBalance': bankSyncBalance,
+        'bankAutoAdd': bankAutoAdd,
+        'lastBankSync': lastBankSync?.toIso8601String(),
+        'bankSeen': bankSeen,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -97,7 +123,7 @@ class AppSettings {
         maxDaily: (j['maxDaily'] as num?)?.toDouble() ?? 250,
         lang: (j['lang'] as String?) ?? 'ar',
         gender: (j['gender'] as String?) ?? 'm',
-        themeMode: (j['themeMode'] as String?) ?? 'dark',
+        themeMode: (j['themeMode'] as String?) ?? 'light',
         pinHash: j['pinHash'] as String?,
         notifications: (j['notifications'] as bool?) ?? true,
         reminderHour: (j['reminderHour'] as int?) ?? 21,
@@ -111,5 +137,10 @@ class AppSettings {
             .cast<Map<String, dynamic>>()
             .map(CategoryDef.fromJson)
             .toList(),
+        biometrics: (j['biometrics'] as bool?) ?? false,
+        bankSyncBalance: (j['bankSyncBalance'] as bool?) ?? true,
+        bankAutoAdd: (j['bankAutoAdd'] as bool?) ?? false,
+        lastBankSync: j['lastBankSync'] != null ? DateTime.parse(j['lastBankSync'] as String) : null,
+        bankSeen: ((j['bankSeen'] as List?) ?? []).cast<String>(),
       );
 }

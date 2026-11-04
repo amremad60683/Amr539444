@@ -3,21 +3,41 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../services/biometric_service.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
-/// PIN entry screen (only shown when a PIN is set).
+/// Login: navy top with the greeting, PIN pad below. Face ID when enabled.
 class LockScreen extends StatefulWidget {
-  const LockScreen({super.key});
+  const LockScreen({super.key, this.biometrics});
+  final BiometricService? biometrics;
 
   @override
   State<LockScreen> createState() => _LockScreenState();
 }
 
 class _LockScreenState extends State<LockScreen> {
+  late final _bio = widget.biometrics ?? BiometricService();
   String _pin = '';
   bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final app = context.read<AppState>();
+    if (app.settings.biometrics) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _faceId());
+    }
+  }
+
+  Future<void> _faceId() async {
+    final app = context.read<AppState>();
+    if (await _bio.authenticate(app.s.t('faceIdReason'))) {
+      app.unlocked = true;
+      app.refresh();
+    }
+  }
 
   void _tap(String d) {
     if (_pin.length >= 4) return;
@@ -43,31 +63,59 @@ class _LockScreenState extends State<LockScreen> {
     final app = context.read<AppState>();
     final s = app.s;
     final tk = context.tk;
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
-            const Spacer(),
-            BrandMark(size: 56, isAr: app.isAr),
-            const SizedBox(height: 20),
-            Text(s.t('enterPin'), style: AppType.title.copyWith(color: tk.ink)),
-            const SizedBox(height: 20),
-            PinDots(length: _pin.length),
-            SizedBox(
-              height: 32,
-              child: Center(
-                child: _error ? Text(s.t('wrongPin'), style: AppType.label.copyWith(color: tk.danger)) : null,
+    final top = MediaQuery.of(context).padding.top;
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Scaffold(
+        backgroundColor: tk.primary,
+        body: Container(
+          decoration: BoxDecoration(gradient: tk.hero),
+          child: Column(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(24, top + 24, 24, 24),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      BrandMark(size: 64, isAr: app.isAr, onHero: true),
+                      const SizedBox(height: 20),
+                      Text(s.t('loginTitle', {'name': app.settings.name}),
+                          textAlign: TextAlign.center, style: AppType.page.copyWith(color: Colors.white)),
+                      const SizedBox(height: 6),
+                      Text(s.t('loginBody'), style: AppType.body.copyWith(color: tk.onPrimary2)),
+                      const SizedBox(height: 24),
+                      PinDots(length: _pin.length, onHero: true),
+                      SizedBox(
+                        height: 30,
+                        child: Center(
+                          child: _error
+                              ? Text(s.t('wrongPin'), style: AppType.label.copyWith(color: Tokens.heroDanger))
+                              : null,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
-            const Spacer(),
-            PinPad(
-              onDigit: _tap,
-              onBackspace: () {
-                if (_pin.isNotEmpty) setState(() => _pin = _pin.substring(0, _pin.length - 1));
-              },
-            ),
-            const SizedBox(height: 32),
-          ],
+              Container(
+                decoration: BoxDecoration(
+                  color: tk.surface,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+                ),
+                padding: EdgeInsets.fromLTRB(16, 24, 16, MediaQuery.of(context).padding.bottom + 20),
+                child: PinPad(
+                  onDigit: _tap,
+                  onBackspace: () {
+                    if (_pin.isNotEmpty) setState(() => _pin = _pin.substring(0, _pin.length - 1));
+                  },
+                  onFaceId: app.settings.biometrics ? _faceId : null,
+                  faceIdLabel: s.t('useFaceId'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -75,25 +123,28 @@ class _LockScreenState extends State<LockScreen> {
 }
 
 class PinDots extends StatelessWidget {
-  const PinDots({super.key, required this.length});
+  const PinDots({super.key, required this.length, this.onHero = false});
   final int length;
+  final bool onHero;
 
   @override
   Widget build(BuildContext context) {
     final tk = context.tk;
+    final on = onHero ? Colors.white : (tk.dark ? tk.ink : tk.primary);
+    final off = onHero ? Colors.white.withValues(alpha: 0.35) : tk.lineStrong;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: List.generate(
         4,
         (i) => AnimatedContainer(
           duration: const Duration(milliseconds: 120),
-          margin: const EdgeInsets.all(9),
-          width: 14,
-          height: 14,
+          margin: const EdgeInsets.all(10),
+          width: 16,
+          height: 16,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: i < length ? tk.ink : Colors.transparent,
-            border: Border.all(color: i < length ? tk.ink : tk.lineStrong, width: 1.5),
+            color: i < length ? (onHero ? tk.accent : on) : Colors.transparent,
+            border: Border.all(color: i < length ? (onHero ? tk.accent : on) : off, width: 2),
           ),
         ),
       ),
@@ -102,20 +153,22 @@ class PinDots extends StatelessWidget {
 }
 
 class PinPad extends StatelessWidget {
-  const PinPad({super.key, required this.onDigit, required this.onBackspace});
+  const PinPad({super.key, required this.onDigit, required this.onBackspace, this.onFaceId, this.faceIdLabel});
   final ValueChanged<String> onDigit;
   final VoidCallback onBackspace;
+  final VoidCallback? onFaceId;
+  final String? faceIdLabel;
 
   @override
   Widget build(BuildContext context) {
     final tk = context.tk;
-    Widget key(Widget child, VoidCallback? onTap, {String? label}) => Padding(
-          padding: const EdgeInsets.all(8),
+    Widget key(Widget child, VoidCallback? onTap, {String? label, bool filled = true}) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Semantics(
             button: onTap != null,
             label: label,
             child: Material(
-              color: onTap == null ? Colors.transparent : tk.surface,
+              color: onTap == null || !filled ? Colors.transparent : tk.raised,
               shape: const CircleBorder(),
               child: InkWell(
                 customBorder: const CircleBorder(),
@@ -126,10 +179,11 @@ class PinPad extends StatelessWidget {
           ),
         );
     Widget digit(String d) =>
-        key(Text(d, style: AppType.page.copyWith(color: tk.ink, fontWeight: FontWeight.w500)), () => onDigit(d));
+        key(Text(d, style: AppType.page.copyWith(color: tk.ink, fontWeight: FontWeight.w700)), () => onDigit(d));
     return Directionality(
       textDirection: TextDirection.ltr,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           for (final row in [
             ['1', '2', '3'],
@@ -140,9 +194,12 @@ class PinPad extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              key(const SizedBox(), null),
+              onFaceId == null
+                  ? key(const SizedBox(), null)
+                  : key(Icon(CupertinoIcons.viewfinder, color: tk.accent, size: 30), onFaceId,
+                      label: faceIdLabel, filled: false),
               digit('0'),
-              key(Icon(CupertinoIcons.delete_left, color: tk.ink2), onBackspace, label: 'Backspace'),
+              key(Icon(CupertinoIcons.delete_left, color: tk.ink2), onBackspace, label: 'Backspace', filled: false),
             ],
           ),
         ],

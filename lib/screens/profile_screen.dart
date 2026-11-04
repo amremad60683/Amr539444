@@ -1,14 +1,22 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../models/category.dart';
+import '../services/biometric_service.dart';
+import '../services/date_utils.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/add_expense_sheet.dart' show showCategoryEditor;
+import '../widgets/bank_sheet.dart';
 import '../widgets/common.dart';
+import 'bank_guide_screen.dart';
 import 'lock_screen.dart' show PinDots, PinPad;
 import 'month_screen.dart' show showSalarySheet;
 
+/// Account: who you are, bank messages, budget, security and app settings.
+/// Every choice opens a sheet, so rows never squeeze in either language.
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
 
@@ -18,183 +26,300 @@ class ProfileScreen extends StatelessWidget {
     final s = app.s;
     final st = app.settings;
     final tk = context.tk;
+    final top = MediaQuery.of(context).padding.top;
 
-    Widget value(String v) => Text(v, style: AppType.body.copyWith(color: tk.ink2));
+    Widget value(String v) => Text(v, style: AppType.label.copyWith(color: tk.ink3, fontWeight: FontWeight.w700));
+    final themeNames = {'light': s.t('themeLight'), 'dark': s.t('themeDark'), 'system': s.t('themeSystem')};
+    final langNames = {'ar': s.t('arabic'), 'en': s.t('english')};
+    final genderNames = {'m': s.t('male'), 'f': s.t('female')};
+    final sync = st.lastBankSync;
 
-    return SafeArea(
-      bottom: false,
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 48),
+        padding: EdgeInsets.zero,
         children: [
-          PageTitle(s.t('profile')),
-          const SizedBox(height: 12),
-          Group(children: [
-            Line(
-              title: st.name,
-              subtitle: '${s.t('balance')}: ${s.money(st.balance)}',
-              chevron: true,
-              onTap: () => _editName(context, app),
+          // ---------------------------------------------------- header
+          Container(
+            decoration: BoxDecoration(
+              gradient: tk.hero,
+              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(32)),
             ),
-          ]),
-
-          SectionHeader(s.t('settings')),
-          Group(children: [
-            Line(
-              icon: CupertinoIcons.moon,
-              title: s.t('appearance'),
-              trailing: _Segmented(
-                value: st.themeMode,
-                options: {'dark': s.t('themeDark'), 'light': s.t('themeLight'), 'system': s.t('themeSystem')},
-                onChanged: app.setThemeMode,
-              ),
-            ),
-            Line(
-              icon: CupertinoIcons.globe,
-              title: s.t('language'),
-              trailing: _Segmented(
-                value: st.lang,
-                options: {'ar': s.t('arabic'), 'en': s.t('english')},
-                onChanged: app.setLanguage,
-              ),
-            ),
-            if (app.isAr)
-              Line(
-                icon: CupertinoIcons.person,
-                title: s.t('addressAs'),
-                trailing: _Segmented(
-                  value: st.gender,
-                  options: {'m': s.t('male'), 'f': s.t('female')},
-                  onChanged: app.setGender,
+            padding: EdgeInsets.fromLTRB(20, top + 16, 20, 24),
+            child: Column(
+              children: [
+                Text(s.t('profile'), style: AppType.title.copyWith(color: Colors.white)),
+                const SizedBox(height: 18),
+                Avatar(name: st.name, size: 76),
+                const SizedBox(height: 12),
+                Text(st.name, style: AppType.page.copyWith(color: Colors.white)),
+                Text(s.t('memberSince', {'d': s.dayMonth(st.startDate)}),
+                    style: AppType.label.copyWith(color: tk.onPrimary2)),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(CupertinoIcons.creditcard, color: tk.onPrimary2, size: 18),
+                      const SizedBox(width: 10),
+                      Text('${s.t('balance')}  ', style: AppType.label.copyWith(color: tk.onPrimary2)),
+                      Text(s.money(st.balance), style: AppType.figure.copyWith(color: Colors.white)),
+                    ],
+                  ),
                 ),
-              ),
-          ]),
-          const SizedBox(height: 12),
-          Group(children: [
-            Line(
-              icon: CupertinoIcons.slider_horizontal_3,
-              title: s.t('limits'),
-              trailing: value('${s.num0(st.minDaily)} / ${s.num0(st.maxDaily)}'),
-              chevron: true,
-              onTap: () => _editLimits(context, app),
+              ],
             ),
-            Line(
-              icon: CupertinoIcons.money_pound_circle,
-              title: s.t('salaryTitle'),
-              trailing: value(st.hasSalary ? s.money(st.salary) : s.t('safetyNone')),
-              chevron: true,
-              onTap: () => showSalarySheet(context),
-            ),
-            Line(
-              icon: CupertinoIcons.lock,
-              title: s.t('safety'),
-              trailing: value(st.safetyBalance > 0 ? s.money(st.safetyBalance) : s.t('safetyNone')),
-              chevron: true,
-              onTap: () async {
-                final v = await askAmount(context, s,
-                    title: s.t('safety'), helper: s.t('safetyHelp'), initial: st.safetyBalance, allowZero: true);
-                if (v != null) await app.setSafetyBalance(v);
-              },
-            ),
-            Line(
-              icon: CupertinoIcons.pencil,
-              title: s.t('editBalance'),
-              trailing: value(s.money(st.balance)),
-              chevron: true,
-              onTap: () async {
-                final v = await askAmount(context, s,
-                    title: s.t('setBalance'), helper: s.t('setBalanceHelp'), initial: st.balance, allowZero: true);
-                if (v != null) await app.setBalance(v);
-              },
-            ),
-          ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 130),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ---------------------------------------------------- bank
+                SectionHeader(s.t('bankTitle')),
+                Group(indent: 68, children: [
+                  Line(
+                    leading: const IconTile(icon: CupertinoIcons.building_2_fill, color: Color(0xFF3B82F6), size: 38),
+                    title: s.t('bankConnect'),
+                    subtitle: sync == null
+                        ? s.t('bankNever')
+                        : s.t('bankLast', {'t': sameDay(sync, DateTime.now()) ? s.time(sync) : s.shortDate(sync)}),
+                    chevron: true,
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BankGuideScreen())),
+                  ),
+                  Line(
+                    leading: const IconTile(icon: CupertinoIcons.doc_on_clipboard, color: Color(0xFF06B6D4), size: 38),
+                    title: s.t('bankPaste'),
+                    chevron: true,
+                    onTap: () => showBankPaste(context),
+                  ),
+                  Line(
+                    leading: IconTile(icon: CupertinoIcons.arrow_2_circlepath, color: tk.good, size: 38),
+                    title: s.t('bankSync'),
+                    subtitle: s.t('bankSyncHelp'),
+                    trailing: Switch.adaptive(
+                      value: st.bankSyncBalance,
+                      onChanged: (v) => app.setBankOptions(syncBalance: v),
+                    ),
+                  ),
+                  Line(
+                    leading: IconTile(icon: CupertinoIcons.bolt, color: tk.accent, size: 38),
+                    title: s.t('bankAuto'),
+                    trailing: Switch.adaptive(value: st.bankAutoAdd, onChanged: (v) => app.setBankOptions(autoAdd: v)),
+                  ),
+                ]),
 
-          SectionHeader(s.t('categories'), action: s.t('addCategory'), onAction: () async {
-            final r = await showCategoryEditor(context);
-            if (r != null) await app.addCategory(r.$1, r.$2);
-          }),
-          if (st.customCategories.isEmpty)
-            Text(
-              app.allCategories.map((c) => c.label(app.isAr)).join(' · '),
-              style: AppType.label.copyWith(color: tk.ink3),
-            )
-          else
-            Group(children: [
-              for (final c in st.customCategories)
-                Line(
-                  icon: c.icon,
-                  title: c.label(app.isAr),
-                  trailing: IconButton(
-                    tooltip: s.t('delete'),
-                    icon: Icon(CupertinoIcons.trash, size: 18, color: tk.ink3),
-                    onPressed: () async {
-                      if (await confirm(context, s, s.t('deleteCategory'), ok: s.t('delete'), danger: true)) {
-                        await app.deleteCategory(c);
+                // ---------------------------------------------------- account
+                SectionHeader(s.t('account')),
+                Group(indent: 68, children: [
+                  Line(
+                    icon: CupertinoIcons.person,
+                    iconColor: tk.primaryEnd,
+                    title: s.t('yourName'),
+                    trailing: value(st.name),
+                    chevron: true,
+                    onTap: () => _editName(context, app),
+                  ),
+                  Line(
+                    icon: CupertinoIcons.money_pound_circle,
+                    iconColor: tk.good,
+                    title: s.t('salaryTitle'),
+                    trailing: value(st.hasSalary ? s.money(st.salary) : s.t('safetyNone')),
+                    chevron: true,
+                    onTap: () => showSalarySheet(context),
+                  ),
+                  Line(
+                    icon: CupertinoIcons.slider_horizontal_3,
+                    iconColor: tk.accent,
+                    title: s.t('limits'),
+                    trailing: value('${s.num0(st.minDaily)} / ${s.num0(st.maxDaily)}'),
+                    chevron: true,
+                    onTap: () => _editLimits(context, app),
+                  ),
+                  Line(
+                    icon: CupertinoIcons.lock_shield,
+                    iconColor: const Color(0xFF10B981),
+                    title: s.t('safety'),
+                    trailing: value(st.safetyBalance > 0 ? s.money(st.safetyBalance) : s.t('safetyNone')),
+                    chevron: true,
+                    onTap: () async {
+                      final v = await askAmount(context, s,
+                          title: s.t('safety'), helper: s.t('safetyHelp'), initial: st.safetyBalance, allowZero: true);
+                      if (v != null) await app.setSafetyBalance(v);
+                    },
+                  ),
+                  Line(
+                    icon: CupertinoIcons.pencil,
+                    iconColor: const Color(0xFF8B5CF6),
+                    title: s.t('editBalance'),
+                    trailing: value(s.money(st.balance)),
+                    chevron: true,
+                    onTap: () async {
+                      final v = await askAmount(context, s,
+                          title: s.t('setBalance'), helper: s.t('setBalanceHelp'), initial: st.balance, allowZero: true);
+                      if (v != null) await app.setBalance(v);
+                    },
+                  ),
+                ]),
+
+                // ---------------------------------------------------- categories
+                SectionHeader(s.t('categories'), action: s.t('addCategory'), onAction: () async {
+                  final r = await showCategoryEditor(context);
+                  if (r != null) await app.addCategory(r.$1, r.$2);
+                }),
+                Panel(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final c in app.allCategories)
+                        Chip(
+                          avatar: Icon(c.icon, size: 16, color: c.color),
+                          label: Text(c.label(app.isAr), style: AppType.label.copyWith(color: tk.ink)),
+                          backgroundColor: tk.raised,
+                          side: BorderSide.none,
+                          onDeleted: c.custom
+                              ? () async {
+                                  if (await confirm(context, s, s.t('deleteCategory'), ok: s.t('delete'), danger: true)) {
+                                    await app.deleteCategory(c);
+                                  }
+                                }
+                              : null,
+                        ),
+                    ],
+                  ),
+                ),
+
+                // ---------------------------------------------------- security
+                SectionHeader(s.t('security')),
+                Group(indent: 68, children: [
+                  Line(
+                    icon: CupertinoIcons.lock,
+                    iconColor: tk.primaryEnd,
+                    title: st.pinHash == null ? s.t('setPin') : s.t('changePin'),
+                    trailing: value(st.pinHash == null ? s.t('pinOff') : s.t('pinSet')),
+                    chevron: true,
+                    onTap: () => _setPin(context, app),
+                  ),
+                  if (st.pinHash != null) ...[
+                    Line(
+                      icon: CupertinoIcons.viewfinder,
+                      iconColor: tk.accent,
+                      title: s.t('faceId'),
+                      trailing: Switch.adaptive(
+                        value: st.biometrics,
+                        onChanged: (v) async {
+                          if (v && !await BiometricService().available()) return;
+                          await app.setBiometrics(v);
+                        },
+                      ),
+                    ),
+                    Line(
+                      icon: CupertinoIcons.lock_fill,
+                      iconColor: tk.ink2,
+                      title: s.t('lockNow'),
+                      onTap: app.lock,
+                    ),
+                    Line(
+                      icon: CupertinoIcons.lock_open,
+                      iconColor: tk.danger,
+                      title: s.t('removePin'),
+                      titleColor: tk.danger,
+                      onTap: () async {
+                        await app.setPin(null);
+                        await app.setBiometrics(false);
+                      },
+                    ),
+                  ],
+                ]),
+
+                // ---------------------------------------------------- app
+                SectionHeader(s.t('appSection')),
+                Group(indent: 68, children: [
+                  Line(
+                    icon: CupertinoIcons.globe,
+                    iconColor: const Color(0xFF3B82F6),
+                    title: s.t('language'),
+                    trailing: value(langNames[st.lang]!),
+                    chevron: true,
+                    onTap: () async {
+                      final v = await pickOption(context, title: s.t('language'), options: langNames, current: st.lang);
+                      if (v != null) await app.setLanguage(v);
+                    },
+                  ),
+                  Line(
+                    icon: CupertinoIcons.moon,
+                    iconColor: const Color(0xFF6366F1),
+                    title: s.t('appearance'),
+                    trailing: value(themeNames[st.themeMode]!),
+                    chevron: true,
+                    onTap: () async {
+                      final v = await pickOption(context,
+                          title: s.t('appearance'), options: themeNames, current: st.themeMode);
+                      if (v != null) await app.setThemeMode(v);
+                    },
+                  ),
+                  if (app.isAr)
+                    Line(
+                      icon: CupertinoIcons.person_2,
+                      iconColor: const Color(0xFFEC4899),
+                      title: s.t('addressAs'),
+                      trailing: value(genderNames[st.gender]!),
+                      chevron: true,
+                      onTap: () async {
+                        final v = await pickOption(context,
+                            title: s.t('addressAs'), options: genderNames, current: st.gender);
+                        if (v != null) await app.setGender(v);
+                      },
+                    ),
+                  Line(
+                    icon: CupertinoIcons.bell,
+                    iconColor: tk.warn,
+                    title: s.t('notifications'),
+                    trailing: Switch.adaptive(value: st.notifications, onChanged: app.setNotifications),
+                  ),
+                  Line(
+                    icon: CupertinoIcons.clock,
+                    iconColor: const Color(0xFF0EA5E9),
+                    title: s.t('reminderTime'),
+                    trailing: value(
+                      MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay(hour: st.reminderHour, minute: 0)),
+                    ),
+                    chevron: true,
+                    onTap: st.notifications
+                        ? () async {
+                            final t = await showTimePicker(
+                                context: context, initialTime: TimeOfDay(hour: st.reminderHour, minute: 0));
+                            if (t != null) await app.setReminderHour(t.hour);
+                          }
+                        : null,
+                  ),
+                ]),
+
+                const SizedBox(height: 26),
+                Group(indent: 68, children: [
+                  Line(
+                    icon: CupertinoIcons.trash,
+                    iconColor: tk.danger,
+                    title: s.t('resetData'),
+                    titleColor: tk.danger,
+                    onTap: () async {
+                      if (await confirm(context, s, s.t('resetConfirm'), ok: s.t('delete'), danger: true)) {
+                        await app.resetAll();
                       }
                     },
                   ),
-                ),
-            ]),
-
-          SectionHeader(s.t('notifications')),
-          Group(children: [
-            Line(
-              icon: CupertinoIcons.bell,
-              title: s.t('notifications'),
-              trailing: Switch.adaptive(value: st.notifications, onChanged: app.setNotifications),
+                ]),
+                const SizedBox(height: 16),
+                Center(child: Text(s.t('about'), style: AppType.meta.copyWith(color: tk.ink3))),
+              ],
             ),
-            Line(
-              icon: CupertinoIcons.clock,
-              title: s.t('reminderTime'),
-              trailing: value(
-                MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay(hour: st.reminderHour, minute: 0)),
-              ),
-              chevron: true,
-              onTap: st.notifications
-                  ? () async {
-                      final t = await showTimePicker(
-                        context: context,
-                        initialTime: TimeOfDay(hour: st.reminderHour, minute: 0),
-                      );
-                      if (t != null) await app.setReminderHour(t.hour);
-                    }
-                  : null,
-            ),
-          ]),
-
-          SectionHeader(s.t('pinLock')),
-          Group(children: [
-            if (st.pinHash == null)
-              Line(
-                icon: CupertinoIcons.lock,
-                title: s.t('setPin'),
-                chevron: true,
-                onTap: () => _setPin(context, app),
-              )
-            else
-              Line(
-                icon: CupertinoIcons.lock_fill,
-                iconColor: tk.accent,
-                title: s.t('pinSet'),
-                trailing: TextButton(onPressed: () => app.setPin(null), child: Text(s.t('removePin'))),
-              ),
-          ]),
-
-          const SizedBox(height: 28),
-          Group(children: [
-            Line(
-              icon: CupertinoIcons.trash,
-              iconColor: tk.danger,
-              title: s.t('resetData'),
-              titleColor: tk.danger,
-              onTap: () async {
-                if (await confirm(context, s, s.t('resetConfirm'), ok: s.t('delete'), danger: true)) {
-                  await app.resetAll();
-                }
-              },
-            ),
-          ]),
-          const SizedBox(height: 16),
-          Center(child: Text(s.t('about'), style: AppType.meta.copyWith(color: tk.ink3))),
+          ),
         ],
       ),
     );
@@ -281,11 +406,13 @@ class ProfileScreen extends StatelessWidget {
     final s = app.s;
     final first = await showModalBottomSheet<String>(
       context: context,
+      isScrollControlled: true,
       builder: (_) => _PinSetupSheet(title: s.t('setPin')),
     );
     if (first == null || first.length != 4 || !context.mounted) return;
     final second = await showModalBottomSheet<String>(
       context: context,
+      isScrollControlled: true,
       builder: (_) => _PinSetupSheet(title: s.t('confirmPin')),
     );
     if (!context.mounted) return;
@@ -294,28 +421,6 @@ class ProfileScreen extends StatelessWidget {
     } else if (second != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('pinMismatch'))));
     }
-  }
-}
-
-/// Compact segmented control for a settings row.
-class _Segmented extends StatelessWidget {
-  const _Segmented({required this.value, required this.options, required this.onChanged});
-  final String value;
-  final Map<String, String> options;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return SegmentedButton<String>(
-      showSelectedIcon: false,
-      style: const ButtonStyle(
-        visualDensity: VisualDensity.compact,
-        tapTargetSize: MaterialTapTargetSize.padded,
-      ),
-      segments: [for (final e in options.entries) ButtonSegment(value: e.key, label: Text(e.value))],
-      selected: {value},
-      onSelectionChanged: (v) => onChanged(v.first),
-    );
   }
 }
 
@@ -337,7 +442,6 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(widget.title, style: AppType.title.copyWith(color: context.tk.ink)),
-          const SizedBox(height: 8),
           PinDots(length: _pin.length),
           PinPad(
             onDigit: (d) {

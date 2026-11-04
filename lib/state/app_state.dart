@@ -9,6 +9,7 @@ import '../models/category.dart';
 import '../models/installment.dart';
 import '../models/settings.dart';
 import '../models/txn.dart';
+import '../services/bank_sms.dart';
 import '../services/budget_engine.dart';
 import '../services/date_utils.dart';
 import '../services/month_plan.dart';
@@ -47,6 +48,13 @@ class AppState extends ChangeNotifier {
   Map<String, double> outings = {};
 
   bool unlocked = false;
+
+  /// A bank message waiting for the user to confirm (from a Shortcut link
+  /// or pasted). Shown as a sheet by the home shell.
+  BankMessage? pendingBank;
+
+  /// Set when a bank message was added automatically, for a short notice.
+  BankMessage? lastAutoBank;
 
   S get s => S(settings.lang, settings.gender);
   bool get isAr => settings.lang == 'ar';
@@ -235,8 +243,12 @@ class AppState extends ChangeNotifier {
     String gender = 'm',
     double salary = 0,
     int salaryDay = 1,
+    String? pin,
+    bool biometrics = false,
   }) async {
     settings
+      ..pinHash = pin == null ? null : hashPin(pin)
+      ..biometrics = pin != null && biometrics
       ..name = name
       ..balance = balance
       ..minDaily = minDaily
@@ -392,6 +404,69 @@ class AppState extends ChangeNotifier {
       );
     }
     return added;
+  }
+
+  // ---------------------------------------------------------------- bank messages
+
+  bool bankSeenBefore(BankMessage m) => settings.bankSeen.contains(m.fingerprint);
+
+  /// Takes the text of a bank message (from the iPhone Shortcut link or the
+  /// clipboard). Adds it right away when auto-add is on, otherwise keeps it
+  /// for the confirmation sheet.
+  Future<void> receiveBankText(String text) async {
+    final m = parseBankSms(text);
+    if (settings.bankAutoAdd && m.isUseful && !bankSeenBefore(m)) {
+      await applyBank(m);
+      lastAutoBank = m;
+    } else {
+      pendingBank = m;
+    }
+    notifyListeners();
+  }
+
+  void dismissBank() {
+    pendingBank = null;
+    lastAutoBank = null;
+    notifyListeners();
+  }
+
+  /// Records a bank message: adds the expense or income, then (if the bank
+  /// sent it and sync is on) sets the balance to what the bank says. The
+  /// app never contacts the bank; it only reads the message text.
+  Future<void> applyBank(BankMessage m, {String? category, bool addTxn = true}) async {
+    if (addTxn && m.hasTransaction && !bankSeenBefore(m)) {
+      final note = m.merchant ?? s.t('fromBank');
+      if (m.kind == BankKind.debit) {
+        await addExpense(amount: m.amount!, date: DateTime.now(), note: note, category: category ?? m.category);
+      } else if (m.kind == BankKind.credit) {
+        await addMoney(m.amount!, note);
+      }
+    }
+    if (m.balance != null && settings.bankSyncBalance) {
+      settings.balance = m.balance!;
+    }
+    settings.lastBankSync = DateTime.now();
+    settings.bankSeen = [...settings.bankSeen, m.fingerprint].reversed.take(300).toList().reversed.toList();
+    pendingBank = null;
+    await _saveSettings();
+  }
+
+  Future<void> setBankOptions({bool? syncBalance, bool? autoAdd}) async {
+    if (syncBalance != null) settings.bankSyncBalance = syncBalance;
+    if (autoAdd != null) settings.bankAutoAdd = autoAdd;
+    await _saveSettings();
+  }
+
+  Future<void> setBiometrics(bool v) async {
+    settings.biometrics = v;
+    await _saveSettings();
+  }
+
+  /// Lock the app now (shows the login screen when a PIN is set).
+  void lock() {
+    if (settings.pinHash == null) return;
+    unlocked = false;
+    notifyListeners();
   }
 
   // ---------------------------------------------------------------- expenses
